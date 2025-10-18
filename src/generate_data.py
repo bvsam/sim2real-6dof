@@ -17,6 +17,7 @@ from pathlib import Path
 import bpy
 import numpy as np
 import tqdm
+from PIL import Image
 
 # =======================================================================================
 # CONFIGURATION CONSTANTS
@@ -223,6 +224,11 @@ def save_debug_visualization(
     debug_path = Path(args.debug_dir) / f"sample_{sample_idx:05d}.png"
     plt.savefig(debug_path, dpi=120, bbox_inches="tight")
     plt.close()
+
+    # Save the RGB image separately
+    image = Image.fromarray(rgb_image)
+    debug_rgb_image_path = Path(args.debug_dir) / f"sample_{sample_idx:05d}_rgb.png"
+    image.save(debug_rgb_image_path)
 
 
 def generate_gaussian_heatmap(center, size, sigma):
@@ -944,7 +950,7 @@ def main(args):
                     except Exception as e:
                         # Fallback to procedural if texture loading fails
                         print(
-                            f"Error when applying random texture from {texture_images}: {e}"
+                            f"Error when applying random texture from {random_texture}: {e}"
                         )
                         applied_texture = False
 
