@@ -340,20 +340,27 @@ def add_camera_effects(obj):
         cam.data.dof.use_dof = False
 
 
-def generate_camera_intrinsics(add_variation=True):
+def generate_camera_intrinsics(image_width, image_height, add_variation=True):
+    """Generate camera intrinsic matrix with optional variation, scaled to resolution."""
+    # Scale intrinsics based on resolution (BASE intrinsics are for 640x480)
+    scale_x = image_width / DEFAULT_IMAGE_WIDTH
+    scale_y = image_height / DEFAULT_IMAGE_HEIGHT
     """Generate camera intrinsic matrix with optional variation."""
     if add_variation:
         focal_scale = np.random.uniform(*INTRINSICS_VARIATION_RANGE)
-        fx = BASE_FX * focal_scale
-        fy = BASE_FY * focal_scale
-        cx = BASE_CX + np.random.uniform(
+        fx = BASE_FX * focal_scale * scale_x
+        fy = BASE_FY * focal_scale * scale_y
+        cx = BASE_CX * scale_x + np.random.uniform(
             -PRINCIPAL_POINT_VARIATION, PRINCIPAL_POINT_VARIATION
         )
-        cy = BASE_CY + np.random.uniform(
+        cy = BASE_CY * scale_y + np.random.uniform(
             -PRINCIPAL_POINT_VARIATION, PRINCIPAL_POINT_VARIATION
         )
     else:
-        fx, fy, cx, cy = BASE_FX, BASE_FY, BASE_CX, BASE_CY
+        fx = BASE_FX * scale_x
+        fy = BASE_FY * scale_y
+        cx = BASE_CX * scale_x
+        cy = BASE_CY * scale_y
 
     K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
 
@@ -835,7 +842,9 @@ def main(args):
             random_bg_path = str(np.random.choice(coco_images))
 
             # Generate camera intrinsics
-            K_matrix = generate_camera_intrinsics(add_variation=True)
+            K_matrix = generate_camera_intrinsics(
+                args.width, args.height, add_variation=True
+            )
 
             # ===================================================================
             # NEGATIVE SAMPLE
