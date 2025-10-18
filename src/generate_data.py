@@ -340,27 +340,38 @@ def add_camera_effects(obj):
         cam.data.dof.use_dof = False
 
 
-def generate_camera_intrinsics(image_width, image_height, add_variation=True):
+def generate_camera_intrinsics(image_width, image_height, args, add_variation=True):
     """Generate camera intrinsic matrix with optional variation, scaled to resolution."""
-    # Scale intrinsics based on resolution (BASE intrinsics are for 640x480)
-    scale_x = image_width / DEFAULT_IMAGE_WIDTH
-    scale_y = image_height / DEFAULT_IMAGE_HEIGHT
-    """Generate camera intrinsic matrix with optional variation."""
+    # If intrinsics manually specified, use those
+    fx = args.fx if args.fx is not None else BASE_FX
+    fy = args.fy if args.fy is not None else BASE_FY
+    cx = args.cx if args.cx is not None else BASE_CX
+    cy = args.cy if args.cy is not None else BASE_CY
+
+    # If all intrinsics aren't manually specified, scale them with resolution
+    if not (
+        args.fx is not None
+        and args.fy is not None
+        and args.cx is not None
+        and args.cy is not None
+    ):
+        # Scale intrinsics based on resolution (BASE intrinsics are for 640x480)
+        scale_x = image_width / DEFAULT_IMAGE_WIDTH
+        scale_y = image_height / DEFAULT_IMAGE_HEIGHT
+        fx = fx * scale_x
+        fy = fy * scale_y
+        cx = cx * scale_x
+        cy = cy * scale_y
+
     if add_variation:
         focal_scale = np.random.uniform(*INTRINSICS_VARIATION_RANGE)
-        fx = BASE_FX * focal_scale * scale_x
-        fy = BASE_FY * focal_scale * scale_y
-        cx = BASE_CX * scale_x + np.random.uniform(
+        principal_point_scale = np.random.uniform(
             -PRINCIPAL_POINT_VARIATION, PRINCIPAL_POINT_VARIATION
         )
-        cy = BASE_CY * scale_y + np.random.uniform(
-            -PRINCIPAL_POINT_VARIATION, PRINCIPAL_POINT_VARIATION
-        )
-    else:
-        fx = BASE_FX * scale_x
-        fy = BASE_FY * scale_y
-        cx = BASE_CX * scale_x
-        cy = BASE_CY * scale_y
+        fx *= focal_scale
+        fy *= focal_scale
+        cx += principal_point_scale
+        cy += principal_point_scale
 
     K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
 
@@ -843,7 +854,7 @@ def main(args):
 
             # Generate camera intrinsics
             K_matrix = generate_camera_intrinsics(
-                args.width, args.height, add_variation=True
+                args.width, args.height, args, add_variation=True
             )
 
             # ===================================================================
@@ -867,6 +878,7 @@ def main(args):
 
             objs = bproc.loader.load_obj(str(obj_path))
             if not objs:
+                print(f"Failed to load obj from {obj_path}. Abandoning sample...")
                 continue
 
             obj = objs[0]
@@ -1062,6 +1074,7 @@ def main(args):
 
             # Validate
             if not validate_pose_data(obj_to_cam_rotation, obj_to_cam_translation):
+                print("Failed to validate pose data. Abandoning sample...")
                 continue
 
             # ===================================================================
@@ -1149,6 +1162,7 @@ def main(args):
 
             bbox = get_bounding_box_from_mask(mug_mask)
             if bbox is None:
+                print("Failed to get bounding box. Abandoning sample...")
                 continue
 
             # Metadata
@@ -1257,6 +1271,30 @@ if __name__ == "__main__":
         type=int,
         default=DEFAULT_IMAGE_HEIGHT,
         help="Image height in pixels",
+    )
+    parser.add_argument(
+        "--fx",
+        type=float,
+        default=None,
+        help="Camera focal length X",
+    )
+    parser.add_argument(
+        "--fy",
+        type=float,
+        default=None,
+        help="Camera focal length Y",
+    )
+    parser.add_argument(
+        "--cx",
+        type=float,
+        default=None,
+        help="Camera principal point X",
+    )
+    parser.add_argument(
+        "--cy",
+        type=float,
+        default=None,
+        help="Camera principal point Y",
     )
 
     # Paths
