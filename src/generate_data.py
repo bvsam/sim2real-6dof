@@ -89,8 +89,8 @@ PROB_SUBSURFACE = 0.3
 NUM_DISTRACTORS_RANGE = (1, 3)
 DISTRACTOR_SCALE_RANGE = (0.05, 0.3)
 # Distractor placement (shell around mug)
-DISTRACTOR_RADIUS_MIN = 0.15
-DISTRACTOR_RADIUS_MAX = 0.30
+DISTRACTOR_RADIUS_MIN = 0.25
+DISTRACTOR_RADIUS_MAX = 0.50
 DISTRACTOR_HEIGHT_OFFSET_RANGE = (-0.3, 0.3)
 
 # Lighting parameters
@@ -224,12 +224,14 @@ def save_debug_visualization(
     plt.tight_layout()
 
     debug_path = Path(args.debug_dir) / f"sample_{sample_idx:05d}.png"
+    print(f"Saving debug image to {debug_path}")
     plt.savefig(debug_path, dpi=120, bbox_inches="tight")
     plt.close()
 
     # Save the RGB image separately
     image = Image.fromarray(rgb_image)
     debug_rgb_image_path = Path(args.debug_dir) / f"sample_{sample_idx:05d}_rgb.png"
+    print(f"Saving debug RGB image to {debug_rgb_image_path}")
     image.save(debug_rgb_image_path)
 
 
@@ -1133,6 +1135,23 @@ def main(args):
 
             data = bproc.renderer.render()
             data["colors"] = [add_sensor_noise(data["colors"][0])]
+
+            # Validate image isn't too dark
+            rgb_image = data["colors"][0][:, :, :3]  # Remove alpha channel if present
+
+            # Find pixels where ALL RGB channels are <= 10
+            very_dark_pixels = np.all(rgb_image <= 10, axis=2)
+            dark_pixel_count = np.sum(very_dark_pixels)
+            total_pixels = args.width * args.height
+            dark_pixel_fraction = dark_pixel_count / total_pixels
+
+            # Discard if a good portion of image is very dark
+            dark_pixel_fraction_threshold = 0.2
+            if dark_pixel_fraction > dark_pixel_fraction_threshold:
+                print(
+                    f"At least {dark_pixel_fraction_threshold*100}% of image is very dark . Abandoning sample..."
+                )
+                continue
 
             # ===================================================================
             # Generate Labels
