@@ -17,6 +17,7 @@ from pathlib import Path
 import bpy
 import numpy as np
 import tqdm
+from mathutils import Matrix
 from PIL import Image
 
 # =======================================================================================
@@ -93,17 +94,18 @@ DISTRACTOR_RADIUS_MAX = 0.30
 DISTRACTOR_HEIGHT_OFFSET_RANGE = (-0.3, 0.3)
 
 # Lighting parameters
-NUM_LIGHTS_RANGE = (1, 4)
-LIGHT_RADIUS_RANGE = (2.0, 5.0)
+NUM_LIGHTS_RANGE = (2, 4)
+LIGHT_TYPES = ["SUN", "POINT", "SPOT"]
+LIGHT_RADIUS_RANGE = (1.0, 4.0)
 LIGHT_COLOR_RANGE = (0.8, 1.0)
 LIGHT_ENERGY_SUN = (0.5, 2.0)
-LIGHT_ENERGY_POINT = (10, 50)
-LIGHT_ENERGY_SPOT = (20, 80)
+LIGHT_ENERGY_POINT = (40, 200)
+LIGHT_ENERGY_SPOT = (40, 200)
 AMBIENT_LIGHT_LOCATION = [0, 0, OBJECT_BASE_SCALE * 25]
 AMBIENT_ENERGY_RANGE = (0.1, 0.3)
 
 # Material randomization
-MATERIAL_TYPE_PROBS = [0.2, 0.2, 0.6]  # PBR, solid, textured
+MATERIAL_TYPE_PROBS = [0.15, 0.15, 0.7]  # PBR, solid, textured
 MATERIAL_COLOR_RANGE = (0.1, 0.9)
 MATERIAL_ROUGHNESS_RANGE = (0.0, 1.0)
 MATERIAL_METALLIC_RANGE = (0.0, 1.0)
@@ -873,6 +875,7 @@ def main(args):
                 )
                 save_sample_to_hdf5(data, args.output_dir)
                 successful_samples += 1
+                print("Generated negative sample")
                 pbar.update(1)
                 continue
 
@@ -894,6 +897,43 @@ def main(args):
             uniform_scale = OBJECT_BASE_SCALE * scale_variation
             obj.set_scale([uniform_scale, uniform_scale, uniform_scale])
             obj.set_cp("category_id", 1)
+
+            # Ambient light
+            ambient = bproc.types.Light()
+            ambient.set_type("SUN")
+            ambient.set_location(AMBIENT_LIGHT_LOCATION)
+            ambient.set_rotation_euler([0, 0, np.random.uniform(0, 2 * np.pi)])
+            ambient.set_color(np.random.uniform(0.9, 1.0, 3))
+            ambient.set_energy(np.random.uniform(*AMBIENT_ENERGY_RANGE))
+
+            # Pose
+            location = np.random.uniform(
+                [
+                    OBJECT_LOCATION_RANGE_X[0],
+                    OBJECT_LOCATION_RANGE_Y[0],
+                    OBJECT_LOCATION_RANGE_Z[0],
+                ],
+                [
+                    OBJECT_LOCATION_RANGE_X[1],
+                    OBJECT_LOCATION_RANGE_Y[1],
+                    OBJECT_LOCATION_RANGE_Z[1],
+                ],
+            )
+            obj.set_location(location)
+
+            random_rotation = np.random.uniform(
+                [
+                    OBJECT_ROTATION_RANGE_X[0],
+                    OBJECT_ROTATION_RANGE_Y[0],
+                    OBJECT_ROTATION_RANGE_Z[0],
+                ],
+                [
+                    OBJECT_ROTATION_RANGE_X[1],
+                    OBJECT_ROTATION_RANGE_Y[1],
+                    OBJECT_ROTATION_RANGE_Z[1],
+                ],
+            )
+            obj.set_rotation_euler(random_rotation)
 
             # ===================================================================
             # Domain Randomization
@@ -961,16 +1001,16 @@ def main(args):
 
             # Lighting
             num_lights = np.random.randint(*NUM_LIGHTS_RANGE)
+            poi = obj.get_location()
             for _ in range(num_lights):
                 light = bproc.types.Light()
-                light.set_type(np.random.choice(["POINT", "SUN", "SPOT"]))
-                light.set_location(
-                    bproc.sampler.shell(
-                        center=[0, 0, 0],
-                        radius_min=LIGHT_RADIUS_RANGE[0],
-                        radius_max=LIGHT_RADIUS_RANGE[1],
-                    )
+                light.set_type(np.random.choice(LIGHT_TYPES))
+                light_location = bproc.sampler.shell(
+                    center=poi,
+                    radius_min=LIGHT_RADIUS_RANGE[0],
+                    radius_max=LIGHT_RADIUS_RANGE[1],
                 )
+                light.set_location(light_location)
                 light.set_color(np.random.uniform(*LIGHT_COLOR_RANGE, 3))
 
                 if light.get_type() == "SUN":
@@ -979,43 +1019,11 @@ def main(args):
                     light.set_energy(np.random.uniform(*LIGHT_ENERGY_POINT))
                 else:  # SPOT
                     light.set_energy(np.random.uniform(*LIGHT_ENERGY_SPOT))
-
-            # Ambient light
-            ambient = bproc.types.Light()
-            ambient.set_type("SUN")
-            ambient.set_location(AMBIENT_LIGHT_LOCATION)
-            ambient.set_rotation_euler([0, 0, np.random.uniform(0, 2 * np.pi)])
-            ambient.set_color(np.random.uniform(0.9, 1.0, 3))
-            ambient.set_energy(np.random.uniform(*AMBIENT_ENERGY_RANGE))
-
-            # Pose
-            location = np.random.uniform(
-                [
-                    OBJECT_LOCATION_RANGE_X[0],
-                    OBJECT_LOCATION_RANGE_Y[0],
-                    OBJECT_LOCATION_RANGE_Z[0],
-                ],
-                [
-                    OBJECT_LOCATION_RANGE_X[1],
-                    OBJECT_LOCATION_RANGE_Y[1],
-                    OBJECT_LOCATION_RANGE_Z[1],
-                ],
-            )
-            obj.set_location(location)
-
-            random_rotation = np.random.uniform(
-                [
-                    OBJECT_ROTATION_RANGE_X[0],
-                    OBJECT_ROTATION_RANGE_Y[0],
-                    OBJECT_ROTATION_RANGE_Z[0],
-                ],
-                [
-                    OBJECT_ROTATION_RANGE_X[1],
-                    OBJECT_ROTATION_RANGE_Y[1],
-                    OBJECT_ROTATION_RANGE_Z[1],
-                ],
-            )
-            obj.set_rotation_euler(random_rotation)
+                # Point light at poi
+                direction = poi - light_location
+                rotation_matrix = bproc.camera.rotation_from_forward_vec(direction)
+                euler = Matrix(rotation_matrix).to_euler()
+                light.set_rotation_euler(euler)
 
             # Distractors
             distractors = []
