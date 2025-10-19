@@ -11,6 +11,7 @@ and generates ground truth: NOCS maps, masks, bboxes, keypoint heatmaps, and pos
 """
 import argparse
 import json
+import logging
 import random
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from PIL import Image
 # =======================================================================================
 # CONFIGURATION CONSTANTS
 # =======================================================================================
+
+logger = logging.getLogger(__name__)
 
 # Default paths (can be overridden by CLI args)
 DEFAULT_BASE_DIR = Path("/home/blender/workspace")
@@ -138,6 +141,29 @@ NEGATIVE_SAMPLE_RATIO = 0.10
 # =======================================================================================
 
 
+def setup_logging(log_level):
+    """Configure logging with timestamp and level."""
+    # Create formatter
+    formatter = logging.Formatter(
+        "[%(levelname)s] [%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    # Configure root logger
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+
+    # Remove existing handlers
+    logger.handlers = []
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    return logger
+
+
 def save_debug_visualization(
     rgb_image,
     kps_2d,
@@ -224,14 +250,14 @@ def save_debug_visualization(
     plt.tight_layout()
 
     debug_path = Path(args.debug_dir) / f"sample_{sample_idx:05d}.png"
-    print(f"Saving debug image to {debug_path}")
+    logger.info(f"Saving debug image to {debug_path}")
     plt.savefig(debug_path, dpi=120, bbox_inches="tight")
     plt.close()
 
     # Save the RGB image separately
     image = Image.fromarray(rgb_image)
     debug_rgb_image_path = Path(args.debug_dir) / f"sample_{sample_idx:05d}_rgb.png"
-    print(f"Saving debug RGB image to {debug_rgb_image_path}")
+    logger.info(f"Saving debug RGB image to {debug_rgb_image_path}")
     image.save(debug_rgb_image_path)
 
 
@@ -801,9 +827,11 @@ def generate_negative_sample(random_bg_path, K_matrix, image_width, image_height
 
 def main(args):
     """Main data generation pipeline."""
-    print("=" * 70)
-    print("Synthetic 6DoF Mug Pose Data Generator")
-    print("=" * 70)
+    logger = setup_logging(args.log_level)
+
+    logger.info("=" * 70)
+    logger.info("Synthetic 6DoF Mug Pose Data Generator")
+    logger.info("=" * 70)
 
     # Initialize BlenderProc
     bproc.init()
@@ -820,7 +848,7 @@ def main(args):
         Path(args.debug_dir).mkdir(exist_ok=True, parents=True)
 
     # Load assets
-    print(f"\nLoading assets...")
+    logger.info(f"Loading assets...")
     with open(args.keypoint_path, "r") as f:
         keypoints_db = json.load(f)
 
@@ -834,16 +862,16 @@ def main(args):
 
     texture_images = load_texture_images(args.texture_dir)
     if texture_images:
-        print(f"  ✓ {len(texture_images)} DTD texture images")
+        logger.info(f"  ✓ {len(texture_images)} DTD texture images")
     else:
         raise RuntimeError(f"No textures found at {args.texture_dir}")
 
-    print(f"  ✓ {len(annotated_models)} annotated models")
-    print(f"  ✓ {len(coco_images)} background images")
-    print(f"\nGenerating {args.num_samples} samples...")
+    logger.info(f"  ✓ {len(annotated_models)} annotated models")
+    logger.info(f"  ✓ {len(coco_images)} background images")
+    logger.info(f"Generating {args.num_samples} samples...")
     if args.debug:
-        print(f"  Debug mode: ON (saving visualizations to {args.debug_dir})")
-    print("=" * 70)
+        logger.info(f"  Debug mode: ON (saving visualizations to {args.debug_dir})")
+    logger.info("=" * 70)
 
     successful_samples = 0
 
@@ -877,7 +905,7 @@ def main(args):
                 )
                 save_sample_to_hdf5(data, args.output_dir)
                 successful_samples += 1
-                print("Generated negative sample")
+                logger.info("Generated negative sample")
                 pbar.update(1)
                 continue
 
@@ -889,7 +917,9 @@ def main(args):
 
             objs = bproc.loader.load_obj(str(obj_path))
             if not objs:
-                print(f"Failed to load obj from {obj_path}. Abandoning sample...")
+                logger.warning(
+                    f"Failed to load obj from {obj_path}. Abandoning sample..."
+                )
                 continue
 
             obj = objs[0]
@@ -991,7 +1021,7 @@ def main(args):
                         applied_texture = True
                     except Exception as e:
                         # Fallback to procedural if texture loading fails
-                        print(
+                        logger.warning(
                             f"Error when applying random texture from {random_texture}: {e}"
                         )
                         applied_texture = False
@@ -1090,7 +1120,7 @@ def main(args):
 
             # Validate
             if not validate_pose_data(obj_to_cam_rotation, obj_to_cam_translation):
-                print("Failed to validate pose data. Abandoning sample...")
+                logger.warning("Failed to validate pose data. Abandoning sample...")
                 continue
 
             # ===================================================================
@@ -1148,7 +1178,7 @@ def main(args):
             # Discard if a good portion of image is very dark
             dark_pixel_fraction_threshold = 0.2
             if dark_pixel_fraction > dark_pixel_fraction_threshold:
-                print(
+                logger.warning(
                     f"At least {dark_pixel_fraction_threshold*100}% of image is very dark . Abandoning sample..."
                 )
                 continue
@@ -1195,7 +1225,7 @@ def main(args):
 
             bbox = get_bounding_box_from_mask(mug_mask)
             if bbox is None:
-                print("Failed to get bounding box. Abandoning sample...")
+                logger.warning("Failed to get bounding box. Abandoning sample...")
                 continue
 
             # Metadata
@@ -1265,13 +1295,13 @@ def main(args):
             successful_samples += 1
             pbar.update(1)
 
-        print("\n" + "=" * 70)
-        print(f"✓ Generation complete!")
-    print(f"  Samples generated: {args.num_samples}")
-    print(f"  Output directory: {args.output_dir}")
+    logger.info("=" * 70)
+    logger.info(f"✓ Generation complete!")
+    logger.info(f"  Samples generated: {args.num_samples}")
+    logger.info(f"  Output directory: {args.output_dir}")
     if args.debug:
-        print(f"  Debug images: {args.debug_dir}")
-    print("=" * 70)
+        logger.info(f"  Debug images: {args.debug_dir}")
+    logger.info("=" * 70)
 
 
 # =======================================================================================
@@ -1377,6 +1407,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Enable debug mode (save visualization images)",
     )
+    parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
     parser.add_argument(
         "--no-negatives",
         dest="generate_negatives",
