@@ -99,6 +99,10 @@ DISTRACTOR_RADIUS_MIN = 0.25
 DISTRACTOR_RADIUS_MAX = 0.50
 DISTRACTOR_HEIGHT_OFFSET_RANGE = (-0.3, 0.3)
 
+# Maximum occlusion allowable (as a ratio of pixels seen if there were no
+# obstructions/occlusions) before sample is discarded
+MAX_OCCLUSION_ALLOWABLE = 0.1
+
 # Lighting parameters
 NUM_LIGHTS_RANGE = (2, 4)
 LIGHT_TYPES = ["SUN", "POINT", "SPOT"]
@@ -1233,6 +1237,23 @@ def main(args):
             bbox = get_bounding_box_from_mask(mug_mask)
             if bbox is None:
                 logger.warning("Failed to get bounding box. Abandoning sample...")
+                continue
+
+            # Discard if large portion of object is occluded
+            nocs = nocs_data["nocs"][0]
+            # Count pixels where NOCS is non-zero (object present)
+            nocs_mask = np.any(nocs[:, :, :3] > 0, axis=2)
+            nocs_pixels_count = np.count_nonzero(nocs_mask)
+            if nocs_pixels_count == 0:
+                logger.warning(
+                    f"Found 0 non-black NOCS pixels in output. Abandoning sample..."
+                )
+                continue
+            coverage_score = np.sum(mug_mask) / nocs_pixels_count
+            if coverage_score < (1 - MAX_OCCLUSION_ALLOWABLE):
+                logger.warning(
+                    f"Object is {(1-coverage_score)*100}% occluded. Abandoning sample..."
+                )
                 continue
 
             # Metadata
