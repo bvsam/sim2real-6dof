@@ -63,8 +63,10 @@ def main():
             # Center at origin
             mesh.apply_translation(-mesh.bounding_box.centroid)
 
-            # Scale to 1x1x1 cube
-            mesh.apply_scale(1.0 / np.max(mesh.extents))
+            # Scale to [-1, 1] cube (instead of [-0.5, 0.5]) to make full use
+            # of blenderproc's render_nocs, which expects local coordinates in
+            # range [-1, 1]
+            mesh.apply_scale(2.0 / np.max(mesh.extents))
 
             # Rotate to upright pose (ModelNet40 mugs are typically on their side)
             # -90° around X makes opening point up (+Z) and handle point along +X

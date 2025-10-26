@@ -58,6 +58,9 @@ INTRINSICS_VARIATION_RANGE = (0.97, 1.03)  # Focal length scale factor
 PRINCIPAL_POINT_VARIATION = 10  # pixels
 
 # Object parameters
+# Canoncalized models fit within a 2x2x2 cube, not a 1x1x1 cube
+OBJECT_CANONCALIZATION_SCALE = 2.0
+# Base size (i.e. before scaling variation) to scale object, in meters
 OBJECT_BASE_SCALE = 0.1
 OBJECT_SCALE_VARIATION = (0.85, 1.15)
 OBJECT_ROTATION_RANGE_X = (-np.pi / 3, np.pi / 3)
@@ -926,7 +929,11 @@ def main(args):
 
             # Scale with variation
             scale_variation = np.random.uniform(*OBJECT_SCALE_VARIATION)
-            uniform_scale = OBJECT_BASE_SCALE * scale_variation
+            # Re-normalize using OBJECT_CANONCALIZATION_SCALE to ensure unit
+            # size, then apply scaling as usual
+            uniform_scale = (
+                (1 / OBJECT_CANONCALIZATION_SCALE) * OBJECT_BASE_SCALE * scale_variation
+            )
             obj.set_scale([uniform_scale, uniform_scale, uniform_scale])
             obj.set_cp("category_id", 1)
 
