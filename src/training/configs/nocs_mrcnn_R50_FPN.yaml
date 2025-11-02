@@ -1,0 +1,67 @@
+MODEL:
+  DEVICE: cpu
+  # Number of classes (1 for mugs only)
+  ROI_HEADS:
+    NAME: "NOCSROIHeads"
+    NUM_CLASSES: 1
+    BATCH_SIZE_PER_IMAGE: 512
+    POSITIVE_FRACTION: 0.25
+
+  # NOCS Head config
+  NOCS_HEAD:
+    NUM_BINS: 32
+    CONV_DIM: 512
+    NUM_CONV: 8
+    USE_BN: True
+    POOLER_RESOLUTION: 14
+    POOLER_SAMPLING_RATIO: 0
+    POOLER_TYPE: "ROIAlignV2"
+    LOSS_WEIGHT: 1.0
+
+  # Mask head resolution
+  ROI_MASK_HEAD:
+    POOLER_RESOLUTION: 14
+
+  # Backbone
+  BACKBONE:
+    FREEZE_AT: 2
+
+  # RPN
+  RPN:
+    BATCH_SIZE_PER_IMAGE: 256
+
+# Input
+INPUT:
+  FORMAT: "RGB"
+  MIN_SIZE_TRAIN: (480,)
+  MAX_SIZE_TRAIN: 640
+  MIN_SIZE_TEST: 480
+  MAX_SIZE_TEST: 640
+  FLIP_Z_AXIS: True
+
+# Solver (matches NOCS paper)
+SOLVER:
+  IMS_PER_BATCH: 2
+  BASE_LR: 0.001
+  STEPS: (10000, 13000)
+  MAX_ITER: 83000
+  GAMMA: 0.1
+  MOMENTUM: 0.9
+  WEIGHT_DECAY: 0.0001
+  WARMUP_ITERS: 1000
+  CHECKPOINT_PERIOD: 5000
+
+# Datasets
+DATASETS:
+  TRAIN: ("nocs_train",)
+  TEST: ("nocs_val",)
+
+# DataLoader
+DATALOADER:
+  NUM_WORKERS: 4
+
+# Output
+OUTPUT_DIR: "./output/nocs_training"
+
+# Misc
+SEED: 42
