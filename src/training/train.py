@@ -65,6 +65,7 @@ class NOCSTrainer:
         weight_decay: float = 1e-4,
         # Checkpointing
         checkpoint_interval: int = 1000,
+        validation_interval: int = 250,
         log_interval: int = 100,
     ):
         self.model = model.to(device)
@@ -143,6 +144,7 @@ class NOCSTrainer:
         self.current_stage = 0
         self.current_iteration = 0
         self.checkpoint_interval = checkpoint_interval
+        self.validation_interval = validation_interval
         self.log_interval = log_interval
 
         # Tensorboard
@@ -435,11 +437,8 @@ class NOCSTrainer:
                         for k, v in losses.items():
                             self.writer.add_scalar(f"train/{k}", v, iteration)
 
-                    # Checkpointing
-                    if iteration % self.checkpoint_interval == 0:
-                        self.save_checkpoint(iteration, stage_idx)
-
-                        # Validation
+                    # Validation (now separate from checkpointing)
+                    if iteration % self.validation_interval == 0:
                         val_losses = self.validate()
                         val_str = " | ".join(
                             [f"{k}: {v:.4f}" for k, v in val_losses.items()]
@@ -448,6 +447,13 @@ class NOCSTrainer:
 
                         for k, v in val_losses.items():
                             self.writer.add_scalar(f"val/{k}", v, iteration)
+
+                        # Set back to training mode
+                        self.model.train()
+
+                    # Checkpointing
+                    if iteration % self.checkpoint_interval == 0:
+                        self.save_checkpoint(iteration, stage_idx)
 
                     pbar.update(1)
 
@@ -546,6 +552,7 @@ def main():
 
     # Checkpointing
     parser.add_argument("--checkpoint-interval", type=int, default=1000)
+    parser.add_argument("--validation-interval", type=int, default=250)
     parser.add_argument("--log-interval", type=int, default=100)
 
     args = parser.parse_args()
@@ -604,6 +611,7 @@ def main():
         stage2_lr=args.stage2_lr,
         stage3_lr=args.stage3_lr,
         checkpoint_interval=args.checkpoint_interval,
+        validation_interval=args.validation_interval,
         log_interval=args.log_interval,
     )
 
