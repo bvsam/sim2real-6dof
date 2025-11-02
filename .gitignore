@@ -1,6 +1,6 @@
-data/
-debug/
-output/
+/data
+/debug
+/output
 
 
 
