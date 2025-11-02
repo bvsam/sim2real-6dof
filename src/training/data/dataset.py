@@ -86,7 +86,7 @@ class NOCSDataset(Dataset):
             - image: RGB (H, W, 3), uint8
             - masks: Instance masks (H, W, 1), bool - note: single instance
             - coords: NOCS maps (H, W, 1, 3), float32 [0, 1]
-            - class_ids: Class labels (1,), int64 - note: always 1 (mug)
+            - class_ids: Class labels (1,), int64 - note: always 0 (mug)
             - scales: Object scale (1, 3), float32
             - domain_label: 0 (has NOCS) or 1 (no NOCS)
             - intrinsics: Camera K (3, 3), float32
@@ -131,8 +131,8 @@ class NOCSDataset(Dataset):
                 # Mask out background and add instance dimension
                 coords = (nocs * masks).astype(np.float32)[:, :, np.newaxis, :]
 
-                # Class ID (always 1 for mug in single-class case)
-                class_ids = np.array([1], dtype=np.int64)
+                # Class ID (always 0 for mug in single-class case)
+                class_ids = np.array([0], dtype=np.int64)
 
                 # Scale from metadata
                 metadata_raw = f["metadata"][()]
