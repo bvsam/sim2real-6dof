@@ -16,136 +16,15 @@ import random
 from pathlib import Path
 
 import bpy
+import matplotlib.patches as patches
+import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
+import yaml
 from mathutils import Matrix
 from PIL import Image
 
-# =======================================================================================
-# CONFIGURATION CONSTANTS
-# =======================================================================================
-
 logger = logging.getLogger(__name__)
-
-# Default paths (can be overridden by CLI args)
-DEFAULT_BASE_DIR = Path("/home/blender/workspace")
-DEFAULT_MODEL_DIR = DEFAULT_BASE_DIR / "data" / "ModelNet40_canonicalized"
-DEFAULT_KEYPOINT_PATH = DEFAULT_BASE_DIR / "annotations" / "canonical_keypoints.json"
-DEFAULT_COCO_DIR = DEFAULT_BASE_DIR / "data" / "train2017"
-DEFAULT_OUTPUT_DIR = DEFAULT_BASE_DIR / "output"
-DEFAULT_DEBUG_DIR = DEFAULT_BASE_DIR / "debug"
-DEFAULT_TEXTURE_DIR = DEFAULT_BASE_DIR / "data" / "dtd" / "images"
-
-DEFAULT_NUM_SAMPLES = 5
-
-# Image resolution
-DEFAULT_IMAGE_WIDTH = 640
-DEFAULT_IMAGE_HEIGHT = 480
-
-# Camera parameters
-CAMERA_RADIUS_MIN = 0.25
-CAMERA_RADIUS_MAX = 1.0
-CAMERA_ELEVATION_MIN = -80  # default: -90 degrees
-CAMERA_ELEVATION_MAX = 80  # default: 90 degrees
-CAMERA_INPLANE_ROT_RANGE = 0.75  # radians
-
-# Base camera intrinsics (Kinect-like camera)
-BASE_FX = 572.4114
-BASE_FY = 573.57043
-BASE_CX = 325.2611
-BASE_CY = 242.04899
-INTRINSICS_VARIATION_RANGE = (0.97, 1.03)  # Focal length scale factor
-PRINCIPAL_POINT_VARIATION = 10  # pixels
-
-# Object parameters
-# Canoncalized models fit within a 2x2x2 cube, not a 1x1x1 cube
-OBJECT_CANONCALIZATION_SCALE = 2.0
-# Base size (i.e. before scaling variation) to scale object, in meters
-OBJECT_BASE_SCALE = 0.1
-OBJECT_SCALE_VARIATION = (0.85, 1.15)
-OBJECT_ROTATION_RANGE_X = (-np.pi / 3, np.pi / 3)
-OBJECT_ROTATION_RANGE_Y = (-np.pi / 3, np.pi / 3)
-OBJECT_ROTATION_RANGE_Z = (-np.pi * 2, np.pi * 2)
-OBJECT_LOCATION_RANGE_X = (-0.5, 0.5)
-OBJECT_LOCATION_RANGE_Y = (-0.5, 0.5)
-OBJECT_LOCATION_RANGE_Z = (-0.3, 0.3)
-
-# Keypoint heatmap parameters
-HEATMAP_SIZE = 64
-HEATMAP_SIGMA = 2.0
-KEYPOINT_NAMES = [
-    "handle_top",
-    "handle_bottom",
-    "rim_center",
-    "base_center",
-    "rim_front",
-    "rim_back",
-    "rim_left",
-    "rim_right",
-]
-
-# Domain randomization probabilities
-PROB_DISTRACTOR_OBJECTS = 0.4
-PROB_MOTION_BLUR = 0.05
-PROB_DEPTH_OF_FIELD = 0.15
-PROB_COLOR_SHIFT = 0.15
-PROB_SUBSURFACE = 0.3
-
-# Distractor parameters
-NUM_DISTRACTORS_RANGE = (1, 3)
-DISTRACTOR_SCALE_RANGE = (0.05, 0.3)
-# Distractor placement (shell around mug)
-DISTRACTOR_RADIUS_MIN = 0.25
-DISTRACTOR_RADIUS_MAX = 0.50
-DISTRACTOR_HEIGHT_OFFSET_RANGE = (-0.3, 0.3)
-
-# Maximum occlusion allowable (as a ratio of pixels seen if there were no
-# obstructions/occlusions) before sample is discarded
-MAX_OCCLUSION_ALLOWABLE = 0.1
-
-# Lighting parameters
-NUM_LIGHTS_RANGE = (2, 4)
-LIGHT_TYPES = ["SUN", "POINT", "SPOT"]
-LIGHT_RADIUS_RANGE = (1.0, 4.0)
-LIGHT_COLOR_RANGE = (0.8, 1.0)
-LIGHT_ENERGY_SUN = (0.5, 2.0)
-LIGHT_ENERGY_POINT = (40, 200)
-LIGHT_ENERGY_SPOT = (40, 200)
-AMBIENT_LIGHT_LOCATION = [0, 0, OBJECT_BASE_SCALE * 25]
-AMBIENT_ENERGY_RANGE = (0.1, 0.3)
-
-# Material randomization
-MATERIAL_TYPE_PROBS = [0.15, 0.15, 0.7]  # PBR, solid, textured
-MATERIAL_COLOR_RANGE = (0.1, 0.9)
-MATERIAL_ROUGHNESS_RANGE = (0.0, 1.0)
-MATERIAL_METALLIC_RANGE = (0.0, 1.0)
-
-# Texture parameters
-PROCEDURAL_TEXTURE_TYPES = ["stripes", "checker"]
-TEXTURE_APPLICATION_PROB = 0.7  # Probability of using image texture vs procedural
-
-# Sensor noise parameters
-SHOT_NOISE_RANGE = (0.005, 0.02)
-READ_NOISE_RANGE = (0.002, 0.01)
-COLOR_SHIFT_RANGE = (0.97, 1.03)
-
-# Motion blur parameters
-MOTION_BLUR_SHUTTER_RANGE = (0.1, 0.5)
-
-# Depth of field parameters
-DOF_APERTURE_RANGE = (1.0, 4.0)
-
-# Validation tolerances
-ROTATION_ORTHOGONALITY_TOLERANCE = 1e-5
-ROTATION_DETERMINANT_TOLERANCE = 1e-5
-
-# Camera offset parameters (for object position variation in frame)
-CAMERA_POI_OFFSET_FRACTION = 0.2  # Max offset as fraction of camera distance
-MIN_BBOX_VISIBLE_FRACTION = 0.50  # Minimum fraction of bbox that must be in frame
-
-# Negative samples
-NEGATIVE_SAMPLE_RATIO = 0.10
-
 
 # =======================================================================================
 # HELPER FUNCTIONS
@@ -185,21 +64,20 @@ def save_debug_visualization(
     heatmaps,
     sample_idx,
     model_name,
+    debug_dir,
+    keypoint_names,
     save_keypoints=False,
 ):
     """Save debug visualization with keypoints, masks, and heatmaps."""
-    import matplotlib.patches as patches
-    import matplotlib.pyplot as plt
-
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
 
     # RGB with keypoints and bbox
     ax = axes[0, 0]
     ax.imshow(rgb_image)
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(KEYPOINT_NAMES)))
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(keypoint_names)))
 
     for i, (kp, vis, name, color) in enumerate(
-        zip(kps_2d, visibility, KEYPOINT_NAMES, colors)
+        zip(kps_2d, visibility, keypoint_names, colors)
     ):
         if not save_keypoints:
             break
@@ -254,20 +132,20 @@ def save_debug_visualization(
     for i in range(min(3, len(heatmaps))):
         ax = axes[1, i]
         ax.imshow(heatmaps[i], cmap="hot")
-        ax.set_title(f"{KEYPOINT_NAMES[i]}")
+        ax.set_title(f"{keypoint_names[i]}")
         ax.axis("off")
 
     plt.suptitle(f"Sample {sample_idx}: {model_name}", fontsize=14, fontweight="bold")
     plt.tight_layout()
 
-    debug_path = Path(args.debug_dir) / f"sample_{sample_idx:05d}.png"
+    debug_path = Path(debug_dir) / f"sample_{sample_idx:05d}.png"
     logger.info(f"Saving debug image to {debug_path}")
     plt.savefig(debug_path, dpi=120, bbox_inches="tight")
     plt.close()
 
     # Save the RGB image separately
     image = Image.fromarray(rgb_image)
-    debug_rgb_image_path = Path(args.debug_dir) / f"sample_{sample_idx:05d}_rgb.png"
+    debug_rgb_image_path = Path(debug_dir) / f"sample_{sample_idx:05d}_rgb.png"
     logger.info(f"Saving debug RGB image to {debug_rgb_image_path}")
     image.save(debug_rgb_image_path)
 
@@ -321,7 +199,7 @@ def compute_object_to_camera_transform(obj, camera_pose):
     return obj_to_camera
 
 
-def add_sensor_noise(rgb_image):
+def add_sensor_noise(rgb_image, sensor_noise_config):
     """Add realistic sensor noise to RGB image."""
     img_float = rgb_image.astype(np.float32) / 255.0
     num_channels = img_float.shape[2]
@@ -335,20 +213,22 @@ def add_sensor_noise(rgb_image):
         alpha = None
 
     # Shot noise
-    shot_noise_strength = np.random.uniform(*SHOT_NOISE_RANGE)
+    shot_noise_strength = np.random.uniform(*sensor_noise_config["shot_noise_range"])
     shot_noise = (
         np.random.normal(0, 1, rgb.shape) * np.sqrt(rgb + 0.01) * shot_noise_strength
     )
     rgb_noisy = rgb + shot_noise
 
     # Read noise
-    read_noise_std = np.random.uniform(*READ_NOISE_RANGE)
+    read_noise_std = np.random.uniform(*sensor_noise_config["read_noise_range"])
     read_noise = np.random.normal(0, read_noise_std, rgb.shape)
     rgb_noisy = rgb_noisy + read_noise
 
     # Color shift
-    if np.random.random() < PROB_COLOR_SHIFT:
-        color_shift = np.random.uniform(*COLOR_SHIFT_RANGE, size=(1, 1, 3))
+    if np.random.random() < sensor_noise_config["color_shift"]["probability"]:
+        color_shift = np.random.uniform(
+            *sensor_noise_config["color_shift"]["range"], size=(1, 1, 3)
+        )
         rgb_noisy = rgb_noisy * color_shift
 
     rgb_noisy = np.clip(rgb_noisy, 0, 1)
@@ -362,58 +242,48 @@ def add_sensor_noise(rgb_image):
     return (img_noisy * 255).astype(rgb_image.dtype)
 
 
-def add_camera_effects(obj):
+def add_camera_effects(obj, motion_blur_config, depth_of_field_config):
     """Add motion blur and depth of field effects."""
     # Motion blur
-    if np.random.random() < PROB_MOTION_BLUR:
+    if np.random.random() < motion_blur_config["probability"]:
         bpy.context.scene.render.use_motion_blur = True
         bpy.context.scene.render.motion_blur_shutter = np.random.uniform(
-            *MOTION_BLUR_SHUTTER_RANGE
+            *motion_blur_config["shutter_range"]
         )
     else:
         bpy.context.scene.render.use_motion_blur = False
 
     # Depth of field
     cam = bpy.context.scene.camera
-    if np.random.random() < PROB_DEPTH_OF_FIELD:
+    if np.random.random() < depth_of_field_config["probability"]:
         poi = obj.get_location()
         cam_location = np.array(cam.location)
         distance_to_poi = np.linalg.norm(cam_location - poi)
 
         cam.data.dof.use_dof = True
         cam.data.dof.focus_distance = distance_to_poi
-        cam.data.dof.aperture_fstop = np.random.uniform(*DOF_APERTURE_RANGE)
+        cam.data.dof.aperture_fstop = np.random.uniform(
+            *depth_of_field_config["aperture_range"]
+        )
     else:
         cam.data.dof.use_dof = False
 
 
-def generate_camera_intrinsics(image_width, image_height, args, add_variation=True):
+def generate_camera_intrinsics(base_intrinsics, variation_config=None):
     """Generate camera intrinsic matrix with optional variation, scaled to resolution."""
     # If intrinsics manually specified, use those
-    fx = args.fx if args.fx is not None else BASE_FX
-    fy = args.fy if args.fy is not None else BASE_FY
-    cx = args.cx if args.cx is not None else BASE_CX
-    cy = args.cy if args.cy is not None else BASE_CY
+    fx = base_intrinsics["fx"]
+    fy = base_intrinsics["fy"]
+    cx = base_intrinsics["cx"]
+    cy = base_intrinsics["cy"]
 
-    # If all intrinsics aren't manually specified, scale them with resolution
-    if not (
-        args.fx is not None
-        and args.fy is not None
-        and args.cx is not None
-        and args.cy is not None
-    ):
-        # Scale intrinsics based on resolution (BASE intrinsics are for 640x480)
-        scale_x = image_width / DEFAULT_IMAGE_WIDTH
-        scale_y = image_height / DEFAULT_IMAGE_HEIGHT
-        fx = fx * scale_x
-        fy = fy * scale_y
-        cx = cx * scale_x
-        cy = cy * scale_y
-
-    if add_variation:
-        focal_scale = np.random.uniform(*INTRINSICS_VARIATION_RANGE)
+    if variation_config is not None:
+        focal_scale = np.random.uniform(
+            variation_config["focal_scale"]["min"],
+            variation_config["focal_scale"]["max"],
+        )
         principal_point_scale = np.random.uniform(
-            -PRINCIPAL_POINT_VARIATION, PRINCIPAL_POINT_VARIATION
+            -variation_config["principal_point"], variation_config["principal_point"]
         )
         fx *= focal_scale
         fy *= focal_scale
@@ -471,7 +341,7 @@ def get_keypoints_and_visibility(
     return kps_2d_raw, np.array(visibility)
 
 
-def add_distractor_objects(mug_location):
+def add_distractor_objects(mug_location, distractor_config):
     """
     Add random primitive objects as distractors in a shell around the mug.
 
@@ -481,7 +351,7 @@ def add_distractor_objects(mug_location):
     Returns:
         List of distractor objects
     """
-    num_distractors = np.random.randint(*NUM_DISTRACTORS_RANGE)
+    num_distractors = np.random.randint(*distractor_config["count_range"])
     distractors = []
 
     mug_pos = np.array(mug_location)
@@ -491,28 +361,31 @@ def add_distractor_objects(mug_location):
 
         if primitive_type == "cube":
             distractor = bproc.object.create_primitive("CUBE")
-            scale = np.random.uniform(*DISTRACTOR_SCALE_RANGE, 3)
+            scale = np.random.uniform(*distractor_config["scale_range"], 3)
         elif primitive_type == "sphere":
             distractor = bproc.object.create_primitive("SPHERE")
-            scale = np.random.uniform(*DISTRACTOR_SCALE_RANGE, 3)
+            scale = np.random.uniform(*distractor_config["scale_range"], 3)
         elif primitive_type == "cylinder":
             distractor = bproc.object.create_primitive("CYLINDER")
             scale_xy = np.random.uniform(
-                DISTRACTOR_SCALE_RANGE[0], DISTRACTOR_SCALE_RANGE[1]
+                distractor_config["scale_range"][0], distractor_config["scale_range"][1]
             )
             scale_z = np.random.uniform(
-                DISTRACTOR_SCALE_RANGE[0] * 2, DISTRACTOR_SCALE_RANGE[1] * 3
+                distractor_config["scale_range"][0] * 2,
+                distractor_config["scale_range"][1] * 3,
             )
             scale = [scale_xy, scale_xy, scale_z]
         else:  # cone
             distractor = bproc.object.create_primitive("CONE")
-            scale = np.random.uniform(*DISTRACTOR_SCALE_RANGE, 3)
+            scale = np.random.uniform(*distractor_config["scale_range"], 3)
 
         distractor.set_scale(scale)
 
         # Place in a shell around the mug
         # Sample random point on horizontal circle around mug
-        radius = np.random.uniform(DISTRACTOR_RADIUS_MIN, DISTRACTOR_RADIUS_MAX)
+        radius = np.random.uniform(
+            distractor_config["radius"]["min"], distractor_config["radius"]["max"]
+        )
         angle = np.random.uniform(0, 2 * np.pi)
 
         # Horizontal offset from mug
@@ -520,7 +393,7 @@ def add_distractor_objects(mug_location):
         offset_y = radius * np.sin(angle)
 
         # Vertical offset (keep near table surface)
-        offset_z = np.random.uniform(*DISTRACTOR_HEIGHT_OFFSET_RANGE)
+        offset_z = np.random.uniform(*distractor_config["height_offset_range"])
 
         distractor_location = mug_pos + np.array([offset_x, offset_y, offset_z])
         distractor.set_location(distractor_location)
@@ -709,7 +582,12 @@ def load_texture_images(texture_dir):
     return texture_images if texture_images else None
 
 
-def validate_pose_data(rotation_matrix, translation_vector):
+def validate_pose_data(
+    rotation_matrix,
+    translation_vector,
+    rotation_ortho_tolerance=1e-5,
+    rotation_det_tolerance=1e-5,
+):
     """Validate pose data is physically valid."""
     try:
         R = np.array(rotation_matrix)
@@ -718,12 +596,12 @@ def validate_pose_data(rotation_matrix, translation_vector):
         # Check orthogonality
         should_be_identity = R @ R.T
         if not np.allclose(
-            should_be_identity, np.eye(3), atol=ROTATION_ORTHOGONALITY_TOLERANCE
+            should_be_identity, np.eye(3), atol=rotation_ortho_tolerance
         ):
             return False
 
         # Check determinant
-        if not np.allclose(np.linalg.det(R), 1.0, atol=ROTATION_DETERMINANT_TOLERANCE):
+        if not np.allclose(np.linalg.det(R), 1.0, atol=rotation_det_tolerance):
             return False
 
         # Check object is in front of camera (positive Z after NOCS coordinate transform)
@@ -819,7 +697,9 @@ def check_object_in_frame(bbox, image_width, image_height, min_visible_fraction=
 # =======================================================================================
 
 
-def generate_negative_sample(random_bg_path, K_matrix, image_width, image_height):
+def generate_negative_sample(
+    random_bg_path, K_matrix, image_width, image_height, config
+):
     """Generate a negative sample (background only, no object)."""
     # Dummy object for rendering pipeline
     dummy_obj = bproc.object.create_primitive("CUBE")
@@ -871,23 +751,38 @@ def generate_negative_sample(random_bg_path, K_matrix, image_width, image_height
 
     # Render
     data = bproc.renderer.render()
-    data["colors"] = [add_sensor_noise(data["colors"][0])]
+    data["colors"] = [
+        add_sensor_noise(
+            data["colors"][0], config["domain_randomization"]["sensor_noise"]
+        )
+    ]
 
     # Add empty labels
     data["nocs"] = [np.zeros((image_width, image_height, 3), dtype=np.float32)]
     data["bounding_box"] = [np.array([-1, -1, -1, -1], dtype=np.int32)]
     data["instance_mask"] = [np.zeros((image_width, image_height), dtype=np.uint8)]
     data["keypoint_heatmaps"] = [
-        np.zeros((len(KEYPOINT_NAMES), HEATMAP_SIZE, HEATMAP_SIZE), dtype=np.float32)
+        np.zeros(
+            (
+                len(config["heatmaps"]["keypoint_names"]),
+                config["heatmaps"]["size"],
+                config["heatmaps"]["size"],
+            ),
+            dtype=np.float32,
+        )
     ]
     data["keypoints_2d"] = [
-        np.full((len(KEYPOINT_NAMES), 2), -1, dtype=np.float32).tolist()
+        np.full(
+            (len(config["heatmaps"]["keypoint_names"]), 2), -1, dtype=np.float32
+        ).tolist()
     ]
     data["keypoints_visibility"] = [
-        np.zeros(len(KEYPOINT_NAMES), dtype=np.int32).tolist()
+        np.zeros(len(config["heatmaps"]["keypoint_names"]), dtype=np.int32).tolist()
     ]
     data["keypoints_3d_canonical"] = [
-        np.zeros((len(KEYPOINT_NAMES), 3), dtype=np.float32).tolist()
+        np.zeros(
+            (len(config["heatmaps"]["keypoint_names"]), 3), dtype=np.float32
+        ).tolist()
     ]
     data["model_name"] = [np.string_("NEGATIVE_SAMPLE")]
     data["is_negative"] = [np.array([1], dtype=np.uint8)]
@@ -902,63 +797,119 @@ def generate_negative_sample(random_bg_path, K_matrix, image_width, image_height
     return data
 
 
-def main(args):
+def main():
     """Main data generation pipeline."""
+    # =======================================================================================
+    # CLI ARGUMENT PARSING
+    # =======================================================================================
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic 6DoF mug pose estimation training data",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=str,
+        required=True,
+        help="Path to the YAML configuration file",
+    )
+    # Generation parameters
+    parser.add_argument(
+        "-n",
+        "--num-samples",
+        type=int,
+        help="Number of synthetic samples to generate",
+    )
+    # Options
+    parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode (save visualization images)",
+    )
+    parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
+    parser.add_argument(
+        "--no-negatives",
+        dest="generate_negatives",
+        action="store_false",
+        help="Disable generation of negative samples",
+    )
+    args = parser.parse_args()
+
     logger = setup_logging(args.log_level)
 
     logger.info("=" * 70)
     logger.info("Synthetic 6DoF Mug Pose Data Generator")
     logger.info("=" * 70)
 
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+
+    IMAGE_WIDTH = config["generation"]["image_resolution"]["width"]
+    IMAGE_HEIGHT = config["generation"]["image_resolution"]["height"]
+    OUTPUT_DIR = config["paths"]["output_dir"]
+    DEBUG_DIR = config["paths"]["debug_dir"]
+    NUM_SAMPLES = (
+        args.num_samples
+        if args.num_samples is not None
+        else config["generation"]["num_samples"]
+    )
+    SEED = args.seed if args.seed is not None else config["generation"]["seed"]
+
     # Initialize BlenderProc
     bproc.init()
-    bproc.camera.set_resolution(args.width, args.height)
+    bproc.camera.set_resolution(IMAGE_WIDTH, IMAGE_HEIGHT)
 
     # Set random seed
-    random.seed(args.seed)
-    np.random.seed(args.seed)
+    random.seed(SEED)
+    np.random.seed(SEED)
 
     # Create output directories
-    Path(args.output_dir).mkdir(exist_ok=True, parents=True)
+    Path(OUTPUT_DIR).mkdir(exist_ok=True, parents=True)
 
     if args.debug:
-        Path(args.debug_dir).mkdir(exist_ok=True, parents=True)
+        Path(DEBUG_DIR).mkdir(exist_ok=True, parents=True)
 
     # Load assets
     logger.info(f"Loading assets...")
-    with open(args.keypoint_path, "r") as f:
+    with open(config["paths"]["keypoint_path"], "r") as f:
         keypoints_db = json.load(f)
 
-    annotated_models = [Path(args.model_dir) / name for name in keypoints_db.keys()]
+    annotated_models = [
+        Path(config["paths"]["model_dir"]) / name for name in keypoints_db.keys()
+    ]
     if not annotated_models:
-        raise RuntimeError(f"No annotated models found in {args.keypoint_path}")
+        raise RuntimeError(
+            f"No annotated models found in {config['paths']['keypoint_path']}"
+        )
 
-    coco_images = list(Path(args.coco_dir).glob("*.jpg"))
+    coco_images = list(Path(config["paths"]["coco_dir"]).glob("*.jpg"))
     if not coco_images:
-        raise RuntimeError(f"No background images found in {args.coco_dir}")
+        raise RuntimeError(
+            f"No background images found in {config['paths']['coco_dir']}"
+        )
 
-    texture_images = load_texture_images(args.texture_dir)
+    texture_images = load_texture_images(config["paths"]["texture_dir"])
     if texture_images:
         logger.info(f"  ✓ {len(texture_images)} DTD texture images")
     else:
-        raise RuntimeError(f"No textures found at {args.texture_dir}")
+        raise RuntimeError(f"No textures found at {config['paths']['texture_dir']}")
 
     logger.info(f"  ✓ {len(annotated_models)} annotated models")
     logger.info(f"  ✓ {len(coco_images)} background images")
-    logger.info(f"Generating {args.num_samples} samples...")
+    logger.info(f"Generating {NUM_SAMPLES} samples...")
     if args.debug:
-        logger.info(f"  Debug mode: ON (saving visualizations to {args.debug_dir})")
+        logger.info(f"  Debug mode: ON (saving visualizations to {DEBUG_DIR})")
     logger.info("=" * 70)
 
     successful_samples = 0
 
-    with tqdm.tqdm(
-        total=args.num_samples, desc="Generating samples", unit="sample"
-    ) as pbar:
-        while successful_samples < args.num_samples:
+    with tqdm.tqdm(total=NUM_SAMPLES, desc="Generating samples", unit="sample") as pbar:
+        while successful_samples < NUM_SAMPLES:
             # Decide if negative sample
             is_negative_sample = (
-                args.generate_negatives and np.random.random() < NEGATIVE_SAMPLE_RATIO
+                args.generate_negatives
+                and np.random.random() < config["generation"]["negative_sample_ratio"]
             )
 
             # Clean up previous scene
@@ -969,7 +920,8 @@ def main(args):
 
             # Generate camera intrinsics
             K_matrix = generate_camera_intrinsics(
-                args.width, args.height, args, add_variation=True
+                config["camera"]["intrinsics"]["base"],
+                variation_config=config["camera"]["intrinsics"]["variation"],
             )
 
             # ===================================================================
@@ -978,9 +930,9 @@ def main(args):
 
             if is_negative_sample:
                 data = generate_negative_sample(
-                    random_bg_path, K_matrix, args.width, args.height
+                    random_bg_path, K_matrix, IMAGE_WIDTH, IMAGE_HEIGHT, config
                 )
-                save_sample_to_hdf5(data, args.output_dir)
+                save_sample_to_hdf5(data, OUTPUT_DIR)
                 successful_samples += 1
                 logger.info("Generated negative sample")
                 pbar.update(1)
@@ -1002,11 +954,16 @@ def main(args):
             obj = objs[0]
 
             # Scale with variation
-            scale_variation = np.random.uniform(*OBJECT_SCALE_VARIATION)
-            # Re-normalize using OBJECT_CANONCALIZATION_SCALE to ensure unit
+            scale_variation = np.random.uniform(
+                config["object"]["scale_variation"]["min"],
+                config["object"]["scale_variation"]["max"],
+            )
+            # Re-normalize using canoncalized scale to ensure unit
             # size, then apply scaling as usual
             uniform_scale = (
-                (1 / OBJECT_CANONCALIZATION_SCALE) * OBJECT_BASE_SCALE * scale_variation
+                (1 / config["object"]["canonicalization_scale"])
+                * config["object"]["base_scale"]
+                * scale_variation
             )
             obj.set_scale([uniform_scale, uniform_scale, uniform_scale])
             obj.set_cp("category_id", 1)
@@ -1014,36 +971,44 @@ def main(args):
             # Ambient light
             ambient = bproc.types.Light()
             ambient.set_type("SUN")
-            ambient.set_location(AMBIENT_LIGHT_LOCATION)
+            ambient.set_location(
+                config["domain_randomization"]["lighting"]["ambient"]["location"]
+            )
             ambient.set_rotation_euler([0, 0, np.random.uniform(0, 2 * np.pi)])
             ambient.set_color(np.random.uniform(0.9, 1.0, 3))
-            ambient.set_energy(np.random.uniform(*AMBIENT_ENERGY_RANGE))
+            ambient.set_energy(
+                np.random.uniform(
+                    *config["domain_randomization"]["lighting"]["ambient"][
+                        "energy_range"
+                    ]
+                )
+            )
 
             # Pose
             location = np.random.uniform(
                 [
-                    OBJECT_LOCATION_RANGE_X[0],
-                    OBJECT_LOCATION_RANGE_Y[0],
-                    OBJECT_LOCATION_RANGE_Z[0],
+                    config["object"]["location_range"]["x"][0],
+                    config["object"]["location_range"]["y"][0],
+                    config["object"]["location_range"]["z"][0],
                 ],
                 [
-                    OBJECT_LOCATION_RANGE_X[1],
-                    OBJECT_LOCATION_RANGE_Y[1],
-                    OBJECT_LOCATION_RANGE_Z[1],
+                    config["object"]["location_range"]["x"][1],
+                    config["object"]["location_range"]["y"][1],
+                    config["object"]["location_range"]["z"][1],
                 ],
             )
             obj.set_location(location)
 
             random_rotation = np.random.uniform(
                 [
-                    OBJECT_ROTATION_RANGE_X[0],
-                    OBJECT_ROTATION_RANGE_Y[0],
-                    OBJECT_ROTATION_RANGE_Z[0],
+                    config["object"]["rotation_range_rad"]["x"][0],
+                    config["object"]["rotation_range_rad"]["y"][0],
+                    config["object"]["rotation_range_rad"]["z"][0],
                 ],
                 [
-                    OBJECT_ROTATION_RANGE_X[1],
-                    OBJECT_ROTATION_RANGE_Y[1],
-                    OBJECT_ROTATION_RANGE_Z[1],
+                    config["object"]["rotation_range_rad"]["x"][1],
+                    config["object"]["rotation_range_rad"]["y"][1],
+                    config["object"]["rotation_range_rad"]["z"][1],
                 ],
             )
             obj.set_rotation_euler(random_rotation)
@@ -1060,23 +1025,38 @@ def main(args):
                 material = obj.get_materials()[0]
 
             material_type = np.random.choice(
-                ["pbr", "solid", "patterned"], p=MATERIAL_TYPE_PROBS
+                ["pbr", "solid", "patterned"],
+                p=config["domain_randomization"]["materials"]["type_probabilities"],
             )
 
             if material_type == "pbr":
-                base_color = (*np.random.uniform(*MATERIAL_COLOR_RANGE, 3), 1.0)
+                base_color = (
+                    *np.random.uniform(
+                        *config["domain_randomization"]["materials"]["color_range"], 3
+                    ),
+                    1.0,
+                )
                 material.set_principled_shader_value("Base Color", base_color)
                 material.set_principled_shader_value(
-                    "Roughness", random.uniform(*MATERIAL_ROUGHNESS_RANGE)
+                    "Roughness",
+                    random.uniform(
+                        *config["domain_randomization"]["materials"]["roughness_range"]
+                    ),
                 )
                 material.set_principled_shader_value(
-                    "Metallic", random.uniform(*MATERIAL_METALLIC_RANGE)
+                    "Metallic",
+                    random.uniform(
+                        *config["domain_randomization"]["materials"]["metallic_range"]
+                    ),
                 )
                 material.set_principled_shader_value(
                     "Specular IOR Level", random.uniform(0.0, 1.0)
                 )
 
-                if np.random.random() < PROB_SUBSURFACE:
+                if (
+                    np.random.random()
+                    < config["domain_randomization"]["subsurface_probability"]
+                ):
                     material.set_principled_shader_value(
                         "Subsurface Weight", random.uniform(0.0, 0.1)
                     )
@@ -1085,7 +1065,12 @@ def main(args):
                     )
 
             elif material_type == "solid":
-                base_color = (*np.random.uniform(*MATERIAL_COLOR_RANGE, 3), 1.0)
+                base_color = (
+                    *np.random.uniform(
+                        *config["domain_randomization"]["materials"]["color_range"], 3
+                    ),
+                    1.0,
+                )
                 material.set_principled_shader_value("Base Color", base_color)
                 material.set_principled_shader_value("Roughness", 0.8)
                 material.set_principled_shader_value("Metallic", 0.0)
@@ -1094,7 +1079,13 @@ def main(args):
                 # Try to use DTD texture images, fallback to procedural
                 applied_texture = False
 
-                if texture_images and np.random.random() < TEXTURE_APPLICATION_PROB:
+                if (
+                    texture_images
+                    and np.random.random()
+                    < config["domain_randomization"]["materials"]["textures"][
+                        "application_prob"
+                    ]
+                ):
                     try:
                         random_texture = np.random.choice(texture_images)
                         apply_image_texture(material, str(random_texture))
@@ -1108,30 +1099,64 @@ def main(args):
                         applied_texture = False
 
                 if not applied_texture:
-                    texture_type = np.random.choice(PROCEDURAL_TEXTURE_TYPES)
+                    texture_type = np.random.choice(
+                        config["domain_randomization"]["materials"]["textures"][
+                            "procedural_types"
+                        ]
+                    )
                     create_procedural_texture(material, texture_type)
                     material_type = f"procedural_{texture_type}"
 
             # Lighting
-            num_lights = np.random.randint(*NUM_LIGHTS_RANGE)
+            num_lights = np.random.randint(
+                *config["domain_randomization"]["lighting"]["count_range"]
+            )
             poi = obj.get_location()
             for _ in range(num_lights):
                 light = bproc.types.Light()
-                light.set_type(np.random.choice(LIGHT_TYPES))
+                light.set_type(
+                    np.random.choice(
+                        config["domain_randomization"]["lighting"]["types"]
+                    )
+                )
                 light_location = bproc.sampler.shell(
                     center=poi,
-                    radius_min=LIGHT_RADIUS_RANGE[0],
-                    radius_max=LIGHT_RADIUS_RANGE[1],
+                    radius_min=config["domain_randomization"]["lighting"][
+                        "radius_range"
+                    ][0],
+                    radius_max=config["domain_randomization"]["lighting"][
+                        "radius_range"
+                    ][1],
                 )
                 light.set_location(light_location)
-                light.set_color(np.random.uniform(*LIGHT_COLOR_RANGE, 3))
+                light.set_color(
+                    np.random.uniform(
+                        *config["domain_randomization"]["lighting"]["color_range"], 3
+                    )
+                )
 
                 if light.get_type() == "SUN":
-                    light.set_energy(np.random.uniform(*LIGHT_ENERGY_SUN))
+                    light.set_energy(
+                        np.random.uniform(
+                            *config["domain_randomization"]["lighting"]["energy"]["sun"]
+                        )
+                    )
                 elif light.get_type() == "POINT":
-                    light.set_energy(np.random.uniform(*LIGHT_ENERGY_POINT))
+                    light.set_energy(
+                        np.random.uniform(
+                            *config["domain_randomization"]["lighting"]["energy"][
+                                "point"
+                            ]
+                        )
+                    )
                 else:  # SPOT
-                    light.set_energy(np.random.uniform(*LIGHT_ENERGY_SPOT))
+                    light.set_energy(
+                        np.random.uniform(
+                            *config["domain_randomization"]["lighting"]["energy"][
+                                "spot"
+                            ]
+                        )
+                    )
                 # Point light at poi
                 direction = poi - light_location
                 rotation_matrix = bproc.camera.rotation_from_forward_vec(direction)
@@ -1140,8 +1165,13 @@ def main(args):
 
             # Distractors
             distractors = []
-            if np.random.random() < PROB_DISTRACTOR_OBJECTS:
-                distractors = add_distractor_objects(location)
+            if (
+                np.random.random()
+                < config["domain_randomization"]["distractors"]["probability"]
+            ):
+                distractors = add_distractor_objects(
+                    location, config["domain_randomization"]["distractors"]
+                )
 
             # ===================================================================
             # Camera Placement (with offset for varied positioning)
@@ -1150,17 +1180,19 @@ def main(args):
             poi = obj.get_location()
 
             # Calculate camera distance and offset for varied object position in frame
-            camera_distance = np.random.uniform(CAMERA_RADIUS_MIN, CAMERA_RADIUS_MAX)
+            camera_distance = np.random.uniform(
+                config["camera"]["radius"]["min"], config["camera"]["radius"]["max"]
+            )
             camera_location = bproc.sampler.shell(
                 center=poi,
                 radius_min=camera_distance,
                 radius_max=camera_distance,
-                elevation_min=CAMERA_ELEVATION_MIN,
-                elevation_max=CAMERA_ELEVATION_MAX,
+                elevation_min=config["camera"]["elevation"]["min"],
+                elevation_max=config["camera"]["elevation"]["max"],
             )
 
             poi_offset = calculate_camera_poi_offset(
-                camera_distance, CAMERA_POI_OFFSET_FRACTION
+                camera_distance, config["camera"]["poi_offset_fraction"]
             )
             poi_with_offset = poi + poi_offset
             # Point camera at offset POI
@@ -1168,7 +1200,8 @@ def main(args):
             rotation_matrix = bproc.camera.rotation_from_forward_vec(
                 poi_with_offset - camera_location,
                 inplane_rot=np.random.uniform(
-                    -CAMERA_INPLANE_ROT_RANGE, CAMERA_INPLANE_ROT_RANGE
+                    -config["camera"]["inplane_rotation_range"],
+                    config["camera"]["inplane_rotation_range"],
                 ),
             )
 
@@ -1177,10 +1210,16 @@ def main(args):
             )
 
             bproc.camera.add_camera_pose(cam_pose)
-            bproc.camera.set_intrinsics_from_K_matrix(K_matrix, args.width, args.height)
+            bproc.camera.set_intrinsics_from_K_matrix(
+                K_matrix, IMAGE_WIDTH, IMAGE_HEIGHT
+            )
 
             # Camera effects
-            add_camera_effects(obj)
+            add_camera_effects(
+                obj,
+                config["domain_randomization"]["motion_blur"],
+                config["domain_randomization"]["depth_of_field"],
+            )
 
             # ===================================================================
             # Compute Pose (NOCS-compatible)
@@ -1253,7 +1292,11 @@ def main(args):
             bproc.renderer.enable_segmentation_output(map_by=["instance", "class"])
 
             data = bproc.renderer.render()
-            data["colors"] = [add_sensor_noise(data["colors"][0])]
+            data["colors"] = [
+                add_sensor_noise(
+                    data["colors"][0], config["domain_randomization"]["sensor_noise"]
+                )
+            ]
 
             # Validate image isn't too dark
             rgb_image = data["colors"][0][:, :, :3]  # Remove alpha channel if present
@@ -1261,7 +1304,7 @@ def main(args):
             # Find pixels where ALL RGB channels are <= 10
             very_dark_pixels = np.all(rgb_image <= 10, axis=2)
             dark_pixel_count = np.sum(very_dark_pixels)
-            total_pixels = args.width * args.height
+            total_pixels = IMAGE_WIDTH * IMAGE_HEIGHT
             dark_pixel_fraction = dark_pixel_count / total_pixels
 
             # Discard if a good portion of image is very dark
@@ -1278,7 +1321,10 @@ def main(args):
 
             model_keypoints_3d = keypoints_db[obj_path.name]
             ordered_kps_3d = np.array(
-                [model_keypoints_3d[name] for name in KEYPOINT_NAMES]
+                [
+                    model_keypoints_3d[name]
+                    for name in config["heatmaps"]["keypoint_names"]
+                ]
             )
 
             kps_2d_raw, kps_visibility = get_keypoints_and_visibility(
@@ -1286,8 +1332,8 @@ def main(args):
                 ordered_kps_3d,
                 cam_pose,
                 K_matrix,
-                args.width,
-                args.height,
+                IMAGE_WIDTH,
+                IMAGE_HEIGHT,
                 frame=0,
             )
 
@@ -1296,14 +1342,19 @@ def main(args):
             for kp_2d, vis in zip(kps_2d_raw, kps_visibility):
                 if vis == 2:
                     kp_heatmap = [
-                        kp_2d[0] * HEATMAP_SIZE / args.width,
-                        kp_2d[1] * HEATMAP_SIZE / args.height,
+                        kp_2d[0] * config["heatmaps"]["size"] / IMAGE_WIDTH,
+                        kp_2d[1] * config["heatmaps"]["size"] / IMAGE_HEIGHT,
                     ]
                     heatmap = generate_gaussian_heatmap(
-                        kp_heatmap, HEATMAP_SIZE, HEATMAP_SIGMA
+                        kp_heatmap,
+                        config["heatmaps"]["size"],
+                        config["heatmaps"]["sigma"],
                     )
                 else:
-                    heatmap = np.zeros((HEATMAP_SIZE, HEATMAP_SIZE), dtype=np.float32)
+                    heatmap = np.zeros(
+                        (config["heatmaps"]["size"], config["heatmaps"]["size"]),
+                        dtype=np.float32,
+                    )
                 keypoint_heatmaps.append(heatmap)
 
             keypoint_heatmaps = np.stack(keypoint_heatmaps, axis=0)
@@ -1319,7 +1370,10 @@ def main(args):
 
             # Check if object is sufficiently in frame
             is_in_frame, visible_fraction = check_object_in_frame(
-                bbox, args.width, args.height, MIN_BBOX_VISIBLE_FRACTION
+                bbox,
+                IMAGE_WIDTH,
+                IMAGE_HEIGHT,
+                config["validation"]["min_bbox_visible_fraction"],
             )
 
             if not is_in_frame:
@@ -1340,7 +1394,7 @@ def main(args):
                 )
                 continue
             coverage_score = np.sum(mug_mask) / nocs_pixels_count
-            if coverage_score < (1 - MAX_OCCLUSION_ALLOWABLE):
+            if coverage_score < (1 - config["validation"]["max_occlusion_allowable"]):
                 logger.warning(
                     f"Object is {(1-coverage_score)*100}% occluded. Abandoning sample..."
                 )
@@ -1348,14 +1402,14 @@ def main(args):
 
             # Metadata
             bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-            bbox_area_fraction = bbox_area / (args.width * args.height)
+            bbox_area_fraction = bbox_area / (IMAGE_WIDTH * IMAGE_HEIGHT)
             mask_area = np.sum(mug_mask > 0)
             occlusion_ratio = mask_area / bbox_area if bbox_area > 0 else 0.0
             is_truncated = (
                 bbox[0] <= 0
                 or bbox[1] <= 0
-                or bbox[2] >= (args.width - 1)
-                or bbox[3] >= (args.height - 1)
+                or bbox[2] >= (IMAGE_WIDTH - 1)
+                or bbox[3] >= (IMAGE_HEIGHT - 1)
             )
 
             # Debug visualization
@@ -1370,6 +1424,8 @@ def main(args):
                     keypoint_heatmaps,
                     successful_samples,
                     obj_path.name,
+                    DEBUG_DIR,
+                    config["heatmaps"]["keypoint_names"],
                 )
 
             # ===================================================================
@@ -1409,130 +1465,18 @@ def main(args):
             }
             data["metadata"] = [np.string_(json.dumps(metadata))]
 
-            save_sample_to_hdf5(data, args.output_dir)
+            save_sample_to_hdf5(data, OUTPUT_DIR)
             successful_samples += 1
             pbar.update(1)
 
     logger.info("=" * 70)
     logger.info(f"✓ Generation complete!")
-    logger.info(f"  Samples generated: {args.num_samples}")
-    logger.info(f"  Output directory: {args.output_dir}")
+    logger.info(f"  Samples generated: {NUM_SAMPLES}")
+    logger.info(f"  Output directory: {OUTPUT_DIR}")
     if args.debug:
-        logger.info(f"  Debug images: {args.debug_dir}")
+        logger.info(f"  Debug images: {DEBUG_DIR}")
     logger.info("=" * 70)
 
 
-# =======================================================================================
-# CLI ARGUMENT PARSING
-# =======================================================================================
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Generate synthetic 6DoF mug pose estimation training data",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    # Generation parameters
-    parser.add_argument(
-        "-n",
-        "--num-samples",
-        type=int,
-        default=DEFAULT_NUM_SAMPLES,
-        help="Number of synthetic samples to generate",
-    )
-    parser.add_argument(
-        "--width",
-        type=int,
-        default=DEFAULT_IMAGE_WIDTH,
-        help="Image width in pixels",
-    )
-    parser.add_argument(
-        "--height",
-        type=int,
-        default=DEFAULT_IMAGE_HEIGHT,
-        help="Image height in pixels",
-    )
-    parser.add_argument(
-        "--fx",
-        type=float,
-        default=None,
-        help="Camera focal length X",
-    )
-    parser.add_argument(
-        "--fy",
-        type=float,
-        default=None,
-        help="Camera focal length Y",
-    )
-    parser.add_argument(
-        "--cx",
-        type=float,
-        default=None,
-        help="Camera principal point X",
-    )
-    parser.add_argument(
-        "--cy",
-        type=float,
-        default=None,
-        help="Camera principal point Y",
-    )
-
-    # Paths
-    parser.add_argument(
-        "--model-dir",
-        type=str,
-        default=str(DEFAULT_MODEL_DIR),
-        help="Directory containing canonicalized mug models",
-    )
-    parser.add_argument(
-        "--keypoint-path",
-        type=str,
-        default=str(DEFAULT_KEYPOINT_PATH),
-        help="Path to canonical keypoints JSON file",
-    )
-    parser.add_argument(
-        "--coco-dir",
-        type=str,
-        default=str(DEFAULT_COCO_DIR),
-        help="Directory containing COCO background images",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=str(DEFAULT_OUTPUT_DIR),
-        help="Output directory for HDF5 files",
-    )
-    parser.add_argument(
-        "--debug-dir",
-        type=str,
-        default=str(DEFAULT_DEBUG_DIR),
-        help="Directory for debug visualizations",
-    )
-    parser.add_argument(
-        "--texture-dir",
-        type=str,
-        default=str(DEFAULT_TEXTURE_DIR),
-        help="Directory containing DTD texture images",
-    )
-
-    # Options
-    parser.add_argument(
-        "--seed", type=int, default=42, help="Random seed for reproducibility"
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug mode (save visualization images)",
-    )
-    parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
-    parser.add_argument(
-        "--no-negatives",
-        dest="generate_negatives",
-        action="store_false",
-        help="Disable generation of negative samples",
-    )
-
-    args = parser.parse_args()
-
-    main(args)
+    main()
