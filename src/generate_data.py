@@ -139,6 +139,10 @@ DOF_APERTURE_RANGE = (1.0, 4.0)
 ROTATION_ORTHOGONALITY_TOLERANCE = 1e-5
 ROTATION_DETERMINANT_TOLERANCE = 1e-5
 
+# Camera offset parameters (for object position variation in frame)
+CAMERA_POI_OFFSET_FRACTION = 0.2  # Max offset as fraction of camera distance
+MIN_BBOX_VISIBLE_FRACTION = 0.50  # Minimum fraction of bbox that must be in frame
+
 # Negative samples
 NEGATIVE_SAMPLE_RATIO = 0.10
 
@@ -744,6 +748,72 @@ def save_sample_to_hdf5(data, output_dir):
     bproc.writer.write_hdf5(str(output_dir), data, append_to_existing_output=True)
 
 
+def calculate_camera_poi_offset(camera_distance, offset_fraction):
+    """
+    Calculate random offset for camera point-of-interest.
+
+    This offset is applied perpendicular to the camera view direction
+    to move where the camera is "looking", which shifts the object's
+    position within the frame.
+
+    Args:
+        camera_distance: Distance from camera to object
+        offset_fraction: Maximum offset as fraction of distance (0.2 ≈ central 80%)
+
+    Returns:
+        3D offset vector in world coordinates
+    """
+    max_offset = camera_distance * offset_fraction
+    # Random offset in horizontal and vertical directions
+    offset_x = np.random.uniform(-max_offset, max_offset)
+    offset_y = np.random.uniform(-max_offset, max_offset)
+    # Small Z offset for additional variation
+    offset_z = np.random.uniform(-max_offset, max_offset)
+    return np.array([offset_x, offset_y, offset_z])
+
+
+def check_object_in_frame(bbox, image_width, image_height, min_visible_fraction=0.5):
+    """
+    Check if object bounding box is sufficiently visible in frame.
+
+    Args:
+        bbox: Bounding box [x_min, y_min, x_max, y_max] or None
+        image_width: Image width in pixels
+        image_height: Image height in pixels
+        min_visible_fraction: Minimum fraction of bbox that should be visible (0.5 = 50%)
+
+    Returns:
+        (is_valid, visible_fraction) tuple
+    """
+    if bbox is None or bbox[0] < 0:
+        return False, 0.0
+
+    # Calculate original bbox dimensions
+    bbox_width = bbox[2] - bbox[0]
+    bbox_height = bbox[3] - bbox[1]
+    bbox_area = bbox_width * bbox_height
+
+    if bbox_area <= 0:
+        return False, 0.0
+
+    # Calculate clipped bbox (what's actually visible within image bounds)
+    clipped_x_min = max(0, bbox[0])
+    clipped_y_min = max(0, bbox[1])
+    clipped_x_max = min(image_width, bbox[2])
+    clipped_y_max = min(image_height, bbox[3])
+
+    clipped_width = clipped_x_max - clipped_x_min
+    clipped_height = clipped_y_max - clipped_y_min
+    clipped_area = max(0, clipped_width * clipped_height)
+
+    # Calculate what fraction of the bbox is visible
+    visible_fraction = clipped_area / bbox_area if bbox_area > 0 else 0.0
+
+    is_valid = visible_fraction >= min_visible_fraction
+
+    return is_valid, visible_fraction
+
+
 # =======================================================================================
 # MAIN GENERATION FUNCTION
 # =======================================================================================
@@ -1074,21 +1144,29 @@ def main(args):
                 distractors = add_distractor_objects(location)
 
             # ===================================================================
-            # Camera Placement
+            # Camera Placement (with offset for varied positioning)
             # ===================================================================
 
             poi = obj.get_location()
 
+            # Calculate camera distance and offset for varied object position in frame
+            camera_distance = np.random.uniform(CAMERA_RADIUS_MIN, CAMERA_RADIUS_MAX)
             camera_location = bproc.sampler.shell(
                 center=poi,
-                radius_min=CAMERA_RADIUS_MIN,
-                radius_max=CAMERA_RADIUS_MAX,
+                radius_min=camera_distance,
+                radius_max=camera_distance,
                 elevation_min=CAMERA_ELEVATION_MIN,
                 elevation_max=CAMERA_ELEVATION_MAX,
             )
 
+            poi_offset = calculate_camera_poi_offset(
+                camera_distance, CAMERA_POI_OFFSET_FRACTION
+            )
+            poi_with_offset = poi + poi_offset
+            # Point camera at offset POI
+            # This creates the off-center framing effect
             rotation_matrix = bproc.camera.rotation_from_forward_vec(
-                poi - camera_location,
+                poi_with_offset - camera_location,
                 inplane_rot=np.random.uniform(
                     -CAMERA_INPLANE_ROT_RANGE, CAMERA_INPLANE_ROT_RANGE
                 ),
@@ -1237,6 +1315,18 @@ def main(args):
             bbox = get_bounding_box_from_mask(mug_mask)
             if bbox is None:
                 logger.warning("Failed to get bounding box. Abandoning sample...")
+                continue
+
+            # Check if object is sufficiently in frame
+            is_in_frame, visible_fraction = check_object_in_frame(
+                bbox, args.width, args.height, MIN_BBOX_VISIBLE_FRACTION
+            )
+
+            if not is_in_frame:
+                logger.warning(
+                    f"Object not sufficiently in frame (only {visible_fraction*100:.1f}% of bbox visible). "
+                    f"Abandoning sample..."
+                )
                 continue
 
             # Discard if large portion of object is occluded
