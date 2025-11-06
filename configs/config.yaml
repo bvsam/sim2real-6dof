@@ -17,7 +17,7 @@ paths:
 
 # --- Generation Settings ---
 generation:
-  num_samples: 5000
+  num_samples: 5
   seed: 0
   image_resolution:
     width: 640
