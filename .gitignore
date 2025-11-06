@@ -2,7 +2,7 @@
 /debug
 /output
 /training_output
-
+/inference_output
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
