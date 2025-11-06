@@ -258,7 +258,7 @@ def add_distractor_objects(mug_location, distractor_config):
 
     mug_pos = np.array(mug_location)
 
-    for _ in range(num_distractors):
+    for i in range(num_distractors):
         primitive_type = np.random.choice(["cube", "sphere", "cylinder", "cone"])
 
         if primitive_type == "cube":
@@ -305,7 +305,7 @@ def add_distractor_objects(mug_location, distractor_config):
         )
 
         # Random material
-        material = bproc.material.create(name=f"distractor_mat_{_}")
+        material = bproc.material.create(name=f"distractor_mat_{i}")
         base_color = (*np.random.uniform(0.1, 0.9, 3), 1.0)
         material.set_principled_shader_value("Base Color", base_color)
         material.set_principled_shader_value("Roughness", random.uniform(0.2, 1.0))
