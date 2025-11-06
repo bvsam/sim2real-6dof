@@ -7,7 +7,7 @@ Synthetic 6DoF Mug Pose Estimation Data Generator
 
 Generates training data for NOCS-based category-level 6DoF pose estimation.
 Uses BlenderProc to render mugs with domain randomization, COCO backgrounds,
-and generates ground truth: NOCS maps, masks, bboxes, keypoint heatmaps, and poses.
+and generates ground truth: NOCS maps, masks, bboxes, and poses.
 """
 import argparse
 import json
@@ -56,51 +56,20 @@ def setup_logging(log_level):
 
 def save_debug_visualization(
     rgb_image,
-    kps_2d,
-    visibility,
     bbox,
     mask,
     nocs_map,
-    heatmaps,
     sample_idx,
     model_name,
     debug_dir,
-    keypoint_names,
-    save_keypoints=False,
 ):
-    """Save debug visualization with keypoints, masks, and heatmaps."""
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    """Save debug visualization with masks, etc."""
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    axes[1, 1].axis("off")
 
-    # RGB with keypoints and bbox
+    # RGB with bbox
     ax = axes[0, 0]
     ax.imshow(rgb_image)
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(keypoint_names)))
-
-    for i, (kp, vis, name, color) in enumerate(
-        zip(kps_2d, visibility, keypoint_names, colors)
-    ):
-        if not save_keypoints:
-            break
-        if vis == 2:  # Visible
-            ax.scatter(
-                kp[0],
-                kp[1],
-                c=[color],
-                s=50,
-                marker="o",
-                edgecolors="white",
-                linewidths=2,
-            )
-            # ax.text(
-            #     kp[0] + 5,
-            #     kp[1],
-            #     f"{i}:{name[:3]}",
-            #     fontsize=7,
-            #     color="white",
-            #     bbox=dict(boxstyle="round,pad=0.2", facecolor=color, alpha=0.7),
-            # )
-        elif vis == 1:  # Occluded
-            ax.scatter(kp[0], kp[1], c=[color], s=30, marker="x", linewidths=2)
 
     if bbox is not None and bbox[0] >= 0:
         rect = patches.Rectangle(
@@ -113,7 +82,7 @@ def save_debug_visualization(
         )
         ax.add_patch(rect)
 
-    ax.set_title("RGB with Keypoints & BBox")
+    ax.set_title("RGB with BBox")
     ax.axis("off")
 
     # Instance mask
@@ -123,17 +92,10 @@ def save_debug_visualization(
     ax.axis("off")
 
     # NOCS map
-    ax = axes[0, 2]
+    ax = axes[1, 0]
     ax.imshow(nocs_map[:, :, :3])  # Only RGB channels
     ax.set_title("NOCS Map")
     ax.axis("off")
-
-    # First 3 heatmaps
-    for i in range(min(3, len(heatmaps))):
-        ax = axes[1, i]
-        ax.imshow(heatmaps[i], cmap="hot")
-        ax.set_title(f"{keypoint_names[i]}")
-        ax.axis("off")
 
     plt.suptitle(f"Sample {sample_idx}: {model_name}", fontsize=14, fontweight="bold")
     plt.tight_layout()
@@ -148,20 +110,6 @@ def save_debug_visualization(
     debug_rgb_image_path = Path(debug_dir) / f"sample_{sample_idx:05d}_rgb.png"
     logger.info(f"Saving debug RGB image to {debug_rgb_image_path}")
     image.save(debug_rgb_image_path)
-
-
-def generate_gaussian_heatmap(center, size, sigma):
-    """Generate 2D Gaussian heatmap centered at given point."""
-    x = np.arange(0, size, 1, float)
-    y = np.arange(0, size, 1, float)[:, np.newaxis]
-
-    cx = np.clip(center[0], 0, size - 1)
-    cy = np.clip(center[1], 0, size - 1)
-
-    heatmap = np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * sigma**2))
-    heatmap = heatmap / np.max(heatmap) if np.max(heatmap) > 0 else heatmap
-
-    return heatmap.astype(np.float32)
 
 
 def get_bounding_box_from_mask(mask):
@@ -293,52 +241,6 @@ def generate_camera_intrinsics(base_intrinsics, variation_config=None):
     K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
 
     return K
-
-
-def get_keypoints_and_visibility(
-    obj, ordered_kps_3d_local, camera_pose, K_matrix, image_width, image_height, frame=0
-):
-    """Project 3D keypoints to 2D and determine visibility."""
-    bproc.camera.set_intrinsics_from_K_matrix(K_matrix, image_width, image_height)
-
-    # Transform keypoints to world space
-    obj_to_world = np.array(obj.get_local2world_mat())
-    kps_3d_local_h = np.column_stack(
-        [ordered_kps_3d_local, np.ones(len(ordered_kps_3d_local))]
-    )
-    kps_3d_world = ((obj_to_world @ kps_3d_local_h.T).T)[:, :3]
-
-    # Project to 2D
-    kps_2d_raw = bproc.camera.project_points(kps_3d_world, frame)
-
-    # Check visibility
-    visibility = []
-    camera_location = camera_pose[:3, 3]
-
-    for kp_world, kp_2d in zip(kps_3d_world, kps_2d_raw):
-        # Out of frame check
-        if not (0 <= kp_2d[0] < image_width and 0 <= kp_2d[1] < image_height):
-            visibility.append(0)
-            continue
-
-        # Ray cast for occlusion
-        direction = kp_world - camera_location
-        distance_to_kp = np.linalg.norm(direction)
-        direction_normalized = direction / distance_to_kp
-
-        hit, hit_location, _, _, hit_object, _ = bproc.object.scene_ray_cast(
-            camera_location, direction_normalized, max_distance=distance_to_kp + 1.0
-        )
-
-        if hit and hit_object is not None:
-            hit_distance = np.linalg.norm(hit_location - camera_location)
-            is_visible = (hit_distance >= distance_to_kp - 0.05) and (hit_object == obj)
-        else:
-            is_visible = True
-
-        visibility.append(2 if is_visible else 1)
-
-    return kps_2d_raw, np.array(visibility)
 
 
 def add_distractor_objects(mug_location, distractor_config):
@@ -761,29 +663,6 @@ def generate_negative_sample(
     data["nocs"] = [np.zeros((image_width, image_height, 3), dtype=np.float32)]
     data["bounding_box"] = [np.array([-1, -1, -1, -1], dtype=np.int32)]
     data["instance_mask"] = [np.zeros((image_width, image_height), dtype=np.uint8)]
-    data["keypoint_heatmaps"] = [
-        np.zeros(
-            (
-                len(config["heatmaps"]["keypoint_names"]),
-                config["heatmaps"]["size"],
-                config["heatmaps"]["size"],
-            ),
-            dtype=np.float32,
-        )
-    ]
-    data["keypoints_2d"] = [
-        np.full(
-            (len(config["heatmaps"]["keypoint_names"]), 2), -1, dtype=np.float32
-        ).tolist()
-    ]
-    data["keypoints_visibility"] = [
-        np.zeros(len(config["heatmaps"]["keypoint_names"]), dtype=np.int32).tolist()
-    ]
-    data["keypoints_3d_canonical"] = [
-        np.zeros(
-            (len(config["heatmaps"]["keypoint_names"]), 3), dtype=np.float32
-        ).tolist()
-    ]
     data["model_name"] = [np.string_("NEGATIVE_SAMPLE")]
     data["is_negative"] = [np.array([1], dtype=np.uint8)]
     data["camera_intrinsics"] = [K_matrix.tolist()]
@@ -872,15 +751,11 @@ def main():
 
     # Load assets
     logger.info(f"Loading assets...")
-    with open(config["paths"]["keypoint_path"], "r") as f:
-        keypoints_db = json.load(f)
 
-    annotated_models = [
-        Path(config["paths"]["model_dir"]) / name for name in keypoints_db.keys()
-    ]
-    if not annotated_models:
+    models = list(Path(config["paths"]["model_dir"]).glob("*.obj"))
+    if not models:
         raise RuntimeError(
-            f"No annotated models found in {config['paths']['keypoint_path']}"
+            f"No annotated models found in {config['paths']['model_dir']}"
         )
 
     coco_images = list(Path(config["paths"]["coco_dir"]).glob("*.jpg"))
@@ -895,7 +770,7 @@ def main():
     else:
         raise RuntimeError(f"No textures found at {config['paths']['texture_dir']}")
 
-    logger.info(f"  ✓ {len(annotated_models)} annotated models")
+    logger.info(f"  ✓ {len(models)} models")
     logger.info(f"  ✓ {len(coco_images)} background images")
     logger.info(f"Generating {NUM_SAMPLES} samples...")
     if args.debug:
@@ -942,7 +817,7 @@ def main():
             # POSITIVE SAMPLE
             # ===================================================================
 
-            obj_path = np.random.choice(annotated_models)
+            obj_path = np.random.choice(models)
 
             objs = bproc.loader.load_obj(str(obj_path))
             if not objs:
@@ -1319,46 +1194,6 @@ def main():
             # Generate Labels
             # ===================================================================
 
-            model_keypoints_3d = keypoints_db[obj_path.name]
-            ordered_kps_3d = np.array(
-                [
-                    model_keypoints_3d[name]
-                    for name in config["heatmaps"]["keypoint_names"]
-                ]
-            )
-
-            kps_2d_raw, kps_visibility = get_keypoints_and_visibility(
-                obj,
-                ordered_kps_3d,
-                cam_pose,
-                K_matrix,
-                IMAGE_WIDTH,
-                IMAGE_HEIGHT,
-                frame=0,
-            )
-
-            # Heatmaps
-            keypoint_heatmaps = []
-            for kp_2d, vis in zip(kps_2d_raw, kps_visibility):
-                if vis == 2:
-                    kp_heatmap = [
-                        kp_2d[0] * config["heatmaps"]["size"] / IMAGE_WIDTH,
-                        kp_2d[1] * config["heatmaps"]["size"] / IMAGE_HEIGHT,
-                    ]
-                    heatmap = generate_gaussian_heatmap(
-                        kp_heatmap,
-                        config["heatmaps"]["size"],
-                        config["heatmaps"]["sigma"],
-                    )
-                else:
-                    heatmap = np.zeros(
-                        (config["heatmaps"]["size"], config["heatmaps"]["size"]),
-                        dtype=np.float32,
-                    )
-                keypoint_heatmaps.append(heatmap)
-
-            keypoint_heatmaps = np.stack(keypoint_heatmaps, axis=0)
-
             # Mask and bbox
             class_segmap = data["class_segmaps"][0]
             mug_mask = (class_segmap == 1).astype(np.uint8)
@@ -1416,16 +1251,12 @@ def main():
             if args.debug:
                 save_debug_visualization(
                     data["colors"][0][:, :, :3],
-                    kps_2d_raw,
-                    kps_visibility,
                     bbox,
                     mug_mask,
                     nocs_data["nocs"][0],
-                    keypoint_heatmaps,
                     successful_samples,
                     obj_path.name,
                     DEBUG_DIR,
-                    config["heatmaps"]["keypoint_names"],
                 )
 
             # ===================================================================
@@ -1435,10 +1266,6 @@ def main():
             data.update(nocs_data)
             data["bounding_box"] = [bbox]
             data["instance_mask"] = [mug_mask]
-            data["keypoint_heatmaps"] = [keypoint_heatmaps]
-            data["keypoints_2d"] = [kps_2d_raw.tolist()]
-            data["keypoints_visibility"] = [kps_visibility.tolist()]
-            data["keypoints_3d_canonical"] = [ordered_kps_3d.tolist()]
             data["model_name"] = [np.string_(obj_path.name)]
             data["is_negative"] = [np.array([0], dtype=np.uint8)]
             data["camera_intrinsics"] = [K_matrix.tolist()]
@@ -1456,9 +1283,6 @@ def main():
                 "num_distractors": len(distractors),
                 "material_type": material_type,
                 "object_scale": float(uniform_scale),
-                "visible_keypoints": int(np.sum(kps_visibility == 2)),
-                "occluded_keypoints": int(np.sum(kps_visibility == 1)),
-                "out_of_frame_keypoints": int(np.sum(kps_visibility == 0)),
                 "bbox_area_fraction": float(bbox_area_fraction),
                 "occlusion_ratio": float(occlusion_ratio),
                 "is_truncated": bool(is_truncated),
