@@ -515,6 +515,82 @@ def validate_pose_data(
         return False
 
 
+def configure_gpu_rendering(device_type="AUTO", fallback_to_cpu=False):
+    """
+    Configure Blender to use GPU rendering if available.
+
+    Args:
+        device_type: 'OPTIX', 'CUDA', or 'AUTO' for automatic selection
+        fallback_to_cpu: If True, fall back to CPU when GPU unavailable
+
+    Returns:
+        bool: True if GPU was successfully enabled, False otherwise
+    """
+    try:
+        # Get the current scene and set render engine to CYCLES
+        scene = bpy.context.scene
+        scene.render.engine = "CYCLES"
+
+        # Get preferences
+        preferences = bpy.context.preferences
+        cycles_preferences = preferences.addons["cycles"].preferences
+
+        # Refresh devices to detect hardware
+        cycles_preferences.refresh_devices()
+
+        # Auto-detect best device type if requested
+        if device_type == "AUTO":
+            # Prefer OptiX, then CUDA, then fallback
+            available_types = [d.type for d in cycles_preferences.devices]
+            if "OPTIX" in available_types:
+                device_type = "OPTIX"
+            elif "CUDA" in available_types:
+                device_type = "CUDA"
+            else:
+                device_type = None
+
+        # Set compute device type
+        if device_type:
+            cycles_preferences.compute_device_type = device_type
+            logger.info(f"Set compute device type to: {device_type}")
+
+        # Enable all GPU devices
+        gpu_devices = []
+        for device in cycles_preferences.devices:
+            if device.type in ["CUDA", "OPTIX", "HIP", "METAL"]:
+                device.use = True
+                gpu_devices.append(f"{device.name} ({device.type})")
+            else:
+                device.use = False  # Disable CPU devices when using GPU
+
+        if not gpu_devices:
+            logger.warning("No GPU devices found!")
+            if fallback_to_cpu:
+                logger.info("Falling back to CPU rendering")
+                scene.cycles.device = "CPU"
+                return False
+            else:
+                raise RuntimeError("GPU requested but no GPU devices available")
+
+        # Set the scene to use GPU compute
+        scene.cycles.device = "GPU"
+
+        logger.info(f"✓ GPU rendering enabled with {len(gpu_devices)} device(s):")
+        for dev in gpu_devices:
+            logger.info(f"  - {dev}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to configure GPU rendering: {e}")
+        if fallback_to_cpu:
+            logger.info("Falling back to CPU rendering")
+            bpy.context.scene.cycles.device = "CPU"
+            return False
+        else:
+            raise e
+
+
 def save_sample_to_hdf5(data, output_dir):
     """
     Save sample data to HDF5 file.
@@ -713,6 +789,18 @@ def main():
         action="store_false",
         help="Disable generation of negative samples",
     )
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Enable GPU rendering (CUDA/OptiX) if available",
+    )
+    parser.add_argument(
+        "--gpu-type",
+        type=str,
+        choices=["AUTO", "OPTIX", "CUDA", "HIP"],
+        default="AUTO",
+        help="GPU compute device type (AUTO will prefer OptiX > CUDA)",
+    )
     args = parser.parse_args()
 
     logger = setup_logging(args.log_level)
@@ -737,6 +825,9 @@ def main():
 
     # Initialize BlenderProc
     bproc.init()
+    # Configure GPU rendering if requested
+    if args.gpu:
+        configure_gpu_rendering(device_type=args.gpu_type)
     bproc.camera.set_resolution(IMAGE_WIDTH, IMAGE_HEIGHT)
 
     # Set random seed
