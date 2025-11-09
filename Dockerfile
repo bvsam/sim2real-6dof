@@ -1,5 +1,7 @@
-# Start from a clean Ubuntu 22.04 base image
-FROM ubuntu:22.04
+# Define the base image as a build argument with a default value
+ARG BASE_IMAGE=ubuntu:22.04
+# Start from the specified base image
+FROM ${BASE_IMAGE}
 
 # Set environment variables to non-interactive to avoid prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
