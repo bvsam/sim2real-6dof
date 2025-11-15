@@ -10,7 +10,7 @@ import trimesh
 # IMPORTANT: Change this to the path where your ModelNet40 dataset is located.
 # It should be the parent directory containing the "cup" folder.
 DEFAULT_BASE_DIR = Path("/home/blender/workspace")
-MODELNET_PATH = DEFAULT_BASE_DIR / "ModelNet40"
+MODELNET_PATH = DEFAULT_BASE_DIR / "data" / "ModelNet40"
 CATEGORY = "cup"
 OUTPUT_FILE = DEFAULT_BASE_DIR / "annotations" / "approved_mugs_with_handles.txt"
 # ---------------------
