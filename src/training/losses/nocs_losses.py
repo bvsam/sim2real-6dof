@@ -6,7 +6,6 @@ CLASSIFICATION (binning), not regression.
 """
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.ops import roi_align
 
@@ -97,60 +96,3 @@ def nocs_loss(nocs_logits, proposals, gt_nocs, gt_labels, nocs_matched_idxs):
     total_loss = sum(losses) / 3.0
 
     return total_loss
-
-
-# Keep existing classes for backward compatibility
-def compute_nocs_bin_targets(nocs_coords_continuous, num_bins=32):
-    """Convert continuous NOCS coordinates [0, 1] to bin indices."""
-    coords = torch.clamp(nocs_coords_continuous, 0.0, 1.0)
-    bin_indices = (coords * num_bins).long()
-    bin_indices = torch.clamp(bin_indices, 0, num_bins - 1)
-    return bin_indices
-
-
-class NOCSLoss(nn.Module):
-    """Legacy wrapper - use nocs_loss function instead."""
-
-    def __init__(self, num_bins=32):
-        super().__init__()
-        self.num_bins = num_bins
-
-    def forward(self, nocs_logits, target_coords, target_masks, class_ids):
-        # This is the old API - keeping for compatibility but not used in new training
-        raise NotImplementedError("Use nocs_loss function instead")
-
-
-class MaskLoss(nn.Module):
-    """Binary cross-entropy loss for mask prediction."""
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, mask_logits, target_masks, class_ids):
-        # Not used with torchvision model (it computes mask loss internally)
-        raise NotImplementedError("Mask loss computed internally by torchvision model")
-
-
-class ClassificationLoss(nn.Module):
-    """Cross-entropy loss for object classification."""
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, class_logits, target_class_ids):
-        # Not used with torchvision model (it computes classification loss internally)
-        raise NotImplementedError(
-            "Classification loss computed internally by torchvision model"
-        )
-
-
-class BBoxLoss(nn.Module):
-    """Smooth L1 loss for bounding box regression."""
-
-    def __init__(self, beta=1.0):
-        super().__init__()
-        self.beta = beta
-
-    def forward(self, bbox_deltas, target_deltas, class_ids, num_classes):
-        # Not used with torchvision model (it computes bbox loss internally)
-        raise NotImplementedError("BBox loss computed internally by torchvision model")

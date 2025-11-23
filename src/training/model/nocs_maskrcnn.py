@@ -4,7 +4,7 @@ NOCS-enhanced Mask R-CNN using torchvision's pretrained model.
 Adds NOCS coordinate prediction head to torchvision's MaskRCNN.
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -40,8 +40,6 @@ class NOCSRoIHeads(RoIHeads):
         self.nocs_logits_storage = None
         self.nocs_labels_storage = None
         self.nocs_matched_idxs_storage = None
-        self.nocs_proposals_storage = None
-        self.nocs_logits_storage = None
         self.nocs_proposals_storage = None
 
     def forward(self, features, proposals, image_shapes, targets=None):
@@ -90,7 +88,7 @@ class NOCSRoIHeads(RoIHeads):
             )
             losses = {"loss_classifier": loss_classifier, "loss_box_reg": loss_box_reg}
         else:
-            boxes, scores, labels_pred = self.postprocess_detections(
+            boxes, scores, labels = self.postprocess_detections(
                 class_logits, box_regression, proposals, image_shapes
             )
             num_images = len(boxes)
@@ -98,7 +96,7 @@ class NOCSRoIHeads(RoIHeads):
                 result.append(
                     {
                         "boxes": boxes[i],
-                        "labels": labels_pred[i],
+                        "labels": labels[i],
                         "scores": scores[i],
                     }
                 )
@@ -110,7 +108,7 @@ class NOCSRoIHeads(RoIHeads):
                 if matched_idxs is None:
                     raise ValueError("if in training, matched_idxs should not be None")
 
-                # During training, only focus on positive boxes
+                # during training, only focus on positive boxes
                 num_images = len(proposals)
                 mask_proposals = []
                 pos_matched_idxs = []
@@ -144,8 +142,8 @@ class NOCSRoIHeads(RoIHeads):
                 )
                 loss_mask = {"loss_mask": rcnn_loss_mask}
             else:
-                labels_for_mask = [r["labels"] for r in result]
-                masks_probs = maskrcnn_inference(mask_logits, labels_for_mask)
+                labels = [r["labels"] for r in result]
+                masks_probs = maskrcnn_inference(mask_logits, labels)
                 for mask_prob, r in zip(masks_probs, result):
                     r["masks"] = mask_prob
 
@@ -203,7 +201,7 @@ class NOCSMaskRCNN(nn.Module):
         nocs_output_size: int = 28,
         pretrained: bool = True,
         pretrained_backbone: bool = True,
-        trainable_backbone_layers: int = 3,
+        # trainable_backbone_layers: int = 3,
     ):
         """
         Args:
@@ -212,7 +210,7 @@ class NOCSMaskRCNN(nn.Module):
             nocs_output_size: Output size for NOCS maps (28x28)
             pretrained: Load COCO-pretrained weights for entire model
             pretrained_backbone: Load ImageNet-pretrained weights for backbone
-            trainable_backbone_layers: Number of trainable backbone layers (0-5)
+            # trainable_backbone_layers: Number of trainable backbone layers (0-5)
         """
         super().__init__()
 
@@ -224,7 +222,7 @@ class NOCSMaskRCNN(nn.Module):
             weights = MaskRCNN_ResNet50_FPN_Weights.COCO_V1
             self.model = maskrcnn_resnet50_fpn(
                 weights=weights,
-                trainable_backbone_layers=trainable_backbone_layers,
+                # trainable_backbone_layers=trainable_backbone_layers,
             )
         else:
             weights_backbone = (
@@ -233,7 +231,7 @@ class NOCSMaskRCNN(nn.Module):
             self.model = maskrcnn_resnet50_fpn(
                 weights=None,
                 weights_backbone=weights_backbone,
-                trainable_backbone_layers=trainable_backbone_layers,
+                # trainable_backbone_layers=trainable_backbone_layers,
             )
 
         # Replace the box predictor for our number of classes
@@ -241,10 +239,14 @@ class NOCSMaskRCNN(nn.Module):
         self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
         # Replace the mask predictor for our number of classes
-        in_features_mask = self.model.roi_heads.mask_predictor.conv5_mask.in_channels
-        hidden_layer = 256
+        mask_predictor_in_channels = (
+            self.model.roi_heads.mask_predictor.conv5_mask.in_channels
+        )
+        mask_dim_reduced = (
+            self.model.roi_heads.mask_predictor.mask_fcn_logits.in_channels
+        )
         self.model.roi_heads.mask_predictor = MaskRCNNPredictor(
-            in_features_mask, hidden_layer, num_classes
+            mask_predictor_in_channels, mask_dim_reduced, num_classes
         )
 
         # Create NOCS RoI pooler (same as mask pooler - 14x14 output)
@@ -256,7 +258,7 @@ class NOCSMaskRCNN(nn.Module):
 
         # Add NOCS prediction head
         nocs_head = NOCSHead(
-            in_channels=256,
+            in_channels=self.model.backbone.out_channels,
             num_classes=num_classes,
             num_bins=num_bins,
             output_size=nocs_output_size,
@@ -272,7 +274,7 @@ class NOCSMaskRCNN(nn.Module):
             bg_iou_thresh=old_roi_heads.proposal_matcher.low_threshold,
             batch_size_per_image=old_roi_heads.fg_bg_sampler.batch_size_per_image,
             positive_fraction=old_roi_heads.fg_bg_sampler.positive_fraction,
-            bbox_reg_weights=None,
+            bbox_reg_weights=old_roi_heads.box_coder.weights,
             score_thresh=old_roi_heads.score_thresh,
             nms_thresh=old_roi_heads.nms_thresh,
             detections_per_img=old_roi_heads.detections_per_img,

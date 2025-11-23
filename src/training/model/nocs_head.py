@@ -16,7 +16,7 @@ class NOCSHead(nn.Module):
 
     Architecture (from NOCS paper):
     - Input: 14x14x256 RoI features
-    - 8x Conv2D (3x3, 512 channels) at 14x14
+    - 8x Conv2D (3x3, 256 channels) at 14x14
     - 1x ConvTranspose2D (2x2, stride=2) -> 28x28
     - 1x Conv2D (1x1) -> final prediction
     - Output: 28x28 x (num_classes * num_bins * 3)
@@ -28,7 +28,7 @@ class NOCSHead(nn.Module):
         self,
         in_channels=256,
         num_conv_layers=8,
-        conv_channels=512,
+        conv_channels=256,
         num_classes=2,  # background + mug (expandable for multi-class)
         num_bins=32,
         output_size=28,
@@ -38,7 +38,7 @@ class NOCSHead(nn.Module):
         Args:
             in_channels: Input channels from RoI features (256 from FPN)
             num_conv_layers: Number of 3x3 conv layers (8 in paper)
-            conv_channels: Channels in conv layers (512 in paper)
+            conv_channels: Channels in conv layers (256 in paper)
             num_classes: Number of object classes (including background)
             num_bins: Number of bins for discretizing [0, 1] range (32 in paper)
             output_size: Output spatial size (28 in paper)
@@ -55,12 +55,10 @@ class NOCSHead(nn.Module):
         for i in range(num_conv_layers):
             in_ch = in_channels if i == 0 else conv_channels
             conv_layers.append(
-                nn.Conv2d(in_ch, conv_channels, kernel_size=3, padding=1)
+                nn.Conv2d(in_ch, conv_channels, kernel_size=3, stride=1, padding=1)
             )
-
             if use_bn:
                 conv_layers.append(nn.BatchNorm2d(conv_channels))
-
             conv_layers.append(nn.ReLU(inplace=True))
 
         self.conv_layers = nn.Sequential(*conv_layers)
@@ -73,7 +71,7 @@ class NOCSHead(nn.Module):
 
         # Final prediction layer
         # Output: num_classes * 3 (xyz) * num_bins
-        self.predictor = nn.Conv2d(
+        self.nocs_fcn_logits = nn.Conv2d(
             conv_channels,
             num_classes * 3 * num_bins,
             kernel_size=1,
@@ -98,7 +96,7 @@ class NOCSHead(nn.Module):
     def forward(self, roi_features):
         """
         Args:
-            roi_features: [num_rois, 256, 14, 14] features from RoI Align
+            roi_features: [num_rois, in_channels, 14, 14] features from RoI Align
 
         Returns:
             nocs_logits: [num_rois, num_classes, 3, num_bins, 28, 28]
@@ -112,7 +110,7 @@ class NOCSHead(nn.Module):
         x = self.deconv_relu(x)
 
         # Final prediction
-        x = self.predictor(x)  # [N, num_classes*3*num_bins, 28, 28]
+        x = self.nocs_fcn_logits(x)  # [N, num_classes*3*num_bins, 28, 28]
 
         # Reshape to separate dimensions
         # [N, num_classes*3*num_bins, 28, 28] -> [N, num_classes, 3, num_bins, 28, 28]
@@ -123,7 +121,7 @@ class NOCSHead(nn.Module):
 
         return x
 
-    def decode_predictions(self, nocs_logits, class_ids=None):
+    def decode_predictions(self, nocs_logits, class_ids=None, weighted_sum=True):
         """
         Convert bin classification logits to coordinate values.
 
@@ -139,16 +137,21 @@ class NOCSHead(nn.Module):
         # Apply softmax over bins
         probs = F.softmax(nocs_logits, dim=3)  # [N, num_classes, 3, num_bins, 28, 28]
 
-        # Get bin centers [0, 1, 2, ..., 31] -> [0.015625, 0.046875, ..., 0.984375]
-        bin_centers = (
-            torch.arange(self.num_bins, device=nocs_logits.device).float() + 0.5
-        ) / self.num_bins
-        bin_centers = bin_centers.view(1, 1, 1, self.num_bins, 1, 1)
-
-        # Weighted sum over bins to get expected coordinate value
-        coords_all_classes = (probs * bin_centers).sum(
-            dim=3
-        )  # [N, num_classes, 3, 28, 28]
+        if weighted_sum:
+            # Get bin centers [0, 1, 2, ..., 31] -> [0.5/32, 1.5/32, ..., 31.5/32]
+            bin_centers = (
+                torch.arange(self.num_bins, device=nocs_logits.device).float() + 0.5
+            ) / self.num_bins
+            bin_centers = bin_centers.view(1, 1, 1, self.num_bins, 1, 1)
+            # Weighted sum over bins to get expected coordinate value
+            coords_all_classes = (probs * bin_centers).sum(
+                dim=3
+            )  # [N, num_classes, 3, 28, 28]
+        else:
+            probs_argmaxed = torch.argmax(probs, dim=3)  # [N, num_classes, 3, 28, 28]
+            coords_all_classes = (
+                probs_argmaxed.float() + 0.5
+            ) / self.num_bins  # [N, num_classes, 3, 28, 28]
 
         # Select coordinates for the predicted/given class
         if class_ids is None:
@@ -162,69 +165,6 @@ class NOCSHead(nn.Module):
             )  # [N, 3, 28, 28]
 
         return coords
-
-
-class NOCSClassificationHead(nn.Module):
-    """
-    Combined head for object classification and NOCS prediction.
-    """
-
-    def __init__(
-        self,
-        in_channels=256,
-        num_classes=2,
-        num_bins=32,
-        roi_size=14,
-        nocs_output_size=28,
-    ):
-        super().__init__()
-
-        self.num_classes = num_classes
-
-        # Classification head (simple MLP)
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.fc_cls = nn.Linear(in_channels, num_classes)
-
-        # Bounding box regression head (standard Faster R-CNN)
-        self.fc_bbox = nn.Sequential(
-            nn.Linear(in_channels * roi_size * roi_size, 1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, num_classes * 4),
-        )
-
-        # NOCS prediction head
-        self.nocs_head = NOCSHead(
-            in_channels=in_channels,
-            num_classes=num_classes,
-            num_bins=num_bins,
-            output_size=nocs_output_size,
-        )
-
-    def forward(self, roi_features):
-        """
-        Args:
-            roi_features: [num_rois, 256, 14, 14]
-
-        Returns:
-            class_logits: [num_rois, num_classes]
-            bbox_deltas: [num_rois, num_classes*4]
-            nocs_logits: [num_rois, num_classes, 3, num_bins, 28, 28]
-        """
-        N = roi_features.shape[0]
-
-        # Classification
-        pooled_features = self.avgpool(roi_features)
-        pooled_features = pooled_features.view(pooled_features.size(0), -1)
-        class_logits = self.fc_cls(pooled_features)
-
-        # Bounding box regression
-        flat_features = roi_features.view(N, -1)
-        bbox_deltas = self.fc_bbox(flat_features)
-
-        # NOCS prediction
-        nocs_logits = self.nocs_head(roi_features)
-
-        return class_logits, bbox_deltas, nocs_logits
 
 
 if __name__ == "__main__":
@@ -258,25 +198,5 @@ if __name__ == "__main__":
     print(f"  Coord range: [{coords.min():.3f}, {coords.max():.3f}]")
     assert coords.shape == (5, 3, 28, 28)
     assert coords.min() >= 0.0 and coords.max() <= 1.0
-
-    # Test combined head
-    print("\nCombined Classification + NOCS Head:")
-    combined_head = NOCSClassificationHead(
-        in_channels=256,
-        num_classes=2,
-        num_bins=32,
-        roi_size=14,
-        nocs_output_size=28,
-    )
-
-    class_logits, bbox_deltas, nocs_logits = combined_head(roi_features)
-
-    print(f"  Class logits: {class_logits.shape}")
-    print(f"  BBox deltas: {bbox_deltas.shape}")
-    print(f"  NOCS logits: {nocs_logits.shape}")
-
-    assert class_logits.shape == (5, 2)
-    assert bbox_deltas.shape == (5, 8)  # 2 classes * 4 coords
-    assert nocs_logits.shape == (5, 2, 3, 32, 28, 28)
 
     print("\n✓ NOCS Head test passed!")

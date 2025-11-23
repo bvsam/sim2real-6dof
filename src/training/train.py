@@ -404,7 +404,7 @@ class NOCSTrainer:
         self.writer.close()
 
 
-def setup_logging(log_file=None):
+def setup_logging(log_level=logging.INFO, log_file=None):
     """Setup logging configuration."""
     handlers = [logging.StreamHandler(sys.stdout)]
 
@@ -412,7 +412,7 @@ def setup_logging(log_file=None):
         handlers.append(logging.FileHandler(log_file))
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format="[%(levelname)s] [%(asctime)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=handlers,
@@ -485,14 +485,16 @@ def main():
     # Checkpointing
     parser.add_argument("--checkpoint-interval", type=int, default=1000)
     parser.add_argument("--validation-interval", type=int, default=250)
+
     parser.add_argument("--log-interval", type=int, default=100)
+    parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
 
     args = parser.parse_args()
 
     # Setup logging
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    setup_logging(output_dir / "training.log")
+    setup_logging(args.log_level, output_dir / "training.log")
 
     logger.info("=" * 70)
     logger.info("NOCS R-CNN Training")
