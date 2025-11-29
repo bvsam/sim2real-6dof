@@ -121,7 +121,7 @@ class NOCSDataset(Dataset):
                 mask = np.array(f["instance_mask"])
                 masks = (mask > 0)[:, :, np.newaxis]
 
-                # NOCS map (H, W, 3) -> (H, W, 1, 3)
+                # NOCS map (H, W, 3 or 4) -> (H, W, 3)
                 nocs = np.array(f["nocs"])[:, :, :3]
 
                 if self.flip_z_axis:
@@ -129,6 +129,7 @@ class NOCSDataset(Dataset):
                     nocs[:, :, 2] = 1 - nocs[:, :, 2]
 
                 # Mask out background and add instance dimension
+                # NOCS map (H, W, 3) -> (H, W, 1, 3)
                 coords = (nocs * masks).astype(np.float32)[:, :, np.newaxis, :]
 
                 # Class ID (always 0 for mug in single-class case)
