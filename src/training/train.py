@@ -10,6 +10,7 @@ Implements the 3-stage training schedule from the NOCS paper:
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict
@@ -241,10 +242,16 @@ class NOCSTrainer:
             # Extract GT data
             gt_nocs = [t["nocs"] for t in targets]
             gt_labels = [t["labels"] for t in targets]
+            gt_masks = [t["masks"] for t in targets]
 
             # Compute NOCS loss
             loss_nocs = nocs_loss(
-                nocs_logits, nocs_proposals, gt_nocs, gt_labels, nocs_matched_idxs
+                nocs_logits,
+                nocs_proposals,
+                gt_nocs,
+                gt_masks,
+                gt_labels,
+                nocs_matched_idxs,
             )
             loss_dict["loss_nocs"] = loss_nocs * self.loss_weight_nocs
         else:
@@ -295,9 +302,15 @@ class NOCSTrainer:
 
                 gt_nocs = [t["nocs"] for t in targets]
                 gt_labels = [t["labels"] for t in targets]
+                gt_masks = [t["masks"] for t in targets]
 
                 loss_nocs = nocs_loss(
-                    nocs_logits, nocs_proposals, gt_nocs, gt_labels, nocs_matched_idxs
+                    nocs_logits,
+                    nocs_proposals,
+                    gt_nocs,
+                    gt_masks,
+                    gt_labels,
+                    nocs_matched_idxs,
                 )
                 loss_dict["loss_nocs"] = loss_nocs * self.loss_weight_nocs
             else:
@@ -465,7 +478,10 @@ def main():
     # Training
     parser.add_argument("--batch-size", type=int, default=2, help="Batch size")
     parser.add_argument(
-        "--num-workers", type=int, default=4, help="Number of data loading workers"
+        "--num-workers",
+        type=int,
+        default=os.cpu_count(),
+        help="Number of data loading workers",
     )
     parser.add_argument(
         "--device", type=str, default="cuda", help="Device to use (cuda or cpu)"

@@ -30,7 +30,20 @@ def project_nocs_on_boxes(gt_nocs, boxes, matched_idxs, M):
     return roi_align(gt_nocs, rois, (M, M), 1.0, aligned=True)
 
 
-def nocs_loss(nocs_logits, proposals, gt_nocs, gt_labels, nocs_matched_idxs):
+def project_masks_on_boxes(gt_masks, boxes, matched_idxs, M):
+    """
+    Project binary masks onto proposal boxes.
+    """
+    matched_idxs = matched_idxs.to(boxes)
+    rois = torch.cat([matched_idxs[:, None], boxes], dim=1)
+    gt_masks = gt_masks.to(rois).float()
+    if gt_masks.dim() == 3:
+        gt_masks = gt_masks.unsqueeze(1)
+    # Use nearest neighbor (or bilnear > 0.5) for masks
+    return roi_align(gt_masks, rois, (M, M), 1.0, aligned=True)
+
+
+def nocs_loss(nocs_logits, proposals, gt_nocs, gt_masks, gt_labels, nocs_matched_idxs):
     """
     Compute NOCS coordinate loss using bin classification.
 
@@ -58,13 +71,20 @@ def nocs_loss(nocs_logits, proposals, gt_nocs, gt_labels, nocs_matched_idxs):
         for nocs, props, idxs in zip(gt_nocs, proposals, nocs_matched_idxs)
     ]
 
+    # Project GT Masks
+    mask_targets = [
+        project_masks_on_boxes(masks, props, idxs, discretization_size)
+        for masks, props, idxs in zip(gt_masks, proposals, nocs_matched_idxs)
+    ]
+
     # Concatenate across batch
     labels = torch.cat(labels, dim=0)
     nocs_targets = torch.cat(nocs_targets, dim=0)  # [N, 3, M, M]
+    mask_targets = torch.cat(mask_targets, dim=0)
 
     # Handle empty case
     if nocs_targets.numel() == 0:
-        return nocs_logits.sum() * 0
+        return 0
 
     # Convert continuous NOCS [0, 1] to bin indices [0, num_bins-1]
     nocs_targets_bins = (nocs_targets * num_bins).long()
@@ -77,6 +97,12 @@ def nocs_loss(nocs_logits, proposals, gt_nocs, gt_labels, nocs_matched_idxs):
         torch.arange(labels.shape[0], device=labels.device), labels
     ]  # [N, 3, num_bins, M, M]
 
+    # Create binary mask
+    valid_mask = (mask_targets > 0.0).squeeze(1)
+
+    if valid_mask.sum() == 0:
+        return 0
+
     # Compute cross-entropy loss for each coordinate
     losses = []
     for coord_idx in range(3):  # x, y, z
@@ -86,9 +112,12 @@ def nocs_loss(nocs_logits, proposals, gt_nocs, gt_labels, nocs_matched_idxs):
         # Reshape for cross_entropy: [N*M*M, num_bins] and [N*M*M]
         coord_logits_flat = coord_logits.permute(0, 2, 3, 1).reshape(-1, num_bins)
         coord_targets_flat = coord_targets.reshape(-1)
+        valid_mask_flat = valid_mask.reshape(-1)
 
         loss_coord = F.cross_entropy(
-            coord_logits_flat, coord_targets_flat, reduction="mean"
+            coord_logits_flat[valid_mask_flat],
+            coord_targets_flat[valid_mask_flat],
+            reduction="mean",
         )
         losses.append(loss_coord)
 
