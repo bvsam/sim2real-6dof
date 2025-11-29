@@ -1,0 +1,7 @@
+[project]
+name = "sim2real-6dof"
+version = "0.1.0"
+description = "Sim to Real 6 degrees of freedom (6DOF) pose estimation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
