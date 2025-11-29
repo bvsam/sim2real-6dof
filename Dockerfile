@@ -66,28 +66,30 @@ RUN groupadd -g ${GID} blender && \
 # Switch to the non-root user
 USER blender
 
-# --- INSTALL PYTHON DEPENDENCIES ---
-# Copy just the requirements file first to leverage Docker cache
-COPY requirements.txt /home/blender/requirements.txt
-
-# Install python packages into the user's home directory
-# --no-cache-dir keeps the image size smaller
-RUN pip install --no-cache-dir -r /home/blender/requirements.txt && rm /home/blender/requirements.txt
+# Set the working directory
+WORKDIR /home/blender/workspace
 
 # Add the user's local bin to the PATH to make installed CLIs available
 ENV PATH="/home/blender/.local/bin:${PATH}"
 
+# Install uv
+RUN wget -qO- https://astral.sh/uv/install.sh | sh
+
+# # --- INSTALL PYTHON DEPENDENCIES ---
+# Copy Python requirements and install them
+COPY pyproject.toml .
+COPY uv.lock .
+COPY README.md .
+RUN uv sync && rm pyproject.toml uv.lock README.md
+
 # Copy over an example script that uses blenderproc
-COPY scripts/blenderproc_init.py /home/blender/blenderproc_init.py
+COPY scripts/blenderproc_init.py .
 
 # Run blenderproc on the example script to allow blenderproc to initialize itself
-RUN blenderproc run /home/blender/blenderproc_init.py && rm /home/blender/blenderproc_init.py
+RUN uv run blenderproc run blenderproc_init.py && rm blenderproc_init.py
 
 # Copy over the blenderproc requirements file
-COPY requirements_blenderproc.txt /home/blender/requirements_blenderproc.txt
+COPY requirements_blenderproc.txt .
 
 # Install dependencies needed for `blenderproc run` commands
-RUN blenderproc pip install $(cat /home/blender/requirements_blenderproc.txt) && rm /home/blender/requirements_blenderproc.txt
-
-# Set the working directory
-WORKDIR /home/blender/workspace
+RUN uv run blenderproc pip install $(cat requirements_blenderproc.txt) && rm requirements_blenderproc.txt

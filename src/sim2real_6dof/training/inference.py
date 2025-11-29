@@ -10,7 +10,6 @@ Supports:
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -21,10 +20,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from src.training.model.nocs_maskrcnn import NOCSMaskRCNN
-from src.training.utils.pose_estimation import (
+from sim2real_6dof.training.model.nocs_maskrcnn import NOCSMaskRCNN
+from sim2real_6dof.training.utils.pose_estimation import (
     compute_rotation_error,
     compute_translation_error,
     umeyama_alignment,

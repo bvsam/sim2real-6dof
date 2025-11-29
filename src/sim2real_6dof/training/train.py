@@ -17,17 +17,13 @@ from typing import Dict
 
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from src.training.data.dataset import NOCSDataset
-from src.training.losses.nocs_losses import nocs_loss
-from src.training.model.nocs_maskrcnn import NOCSMaskRCNN
+from sim2real_6dof.training.data.dataset import NOCSDataset
+from sim2real_6dof.training.losses.nocs_losses import nocs_loss
+from sim2real_6dof.training.model.nocs_maskrcnn import NOCSMaskRCNN
 
 logger = logging.getLogger(__name__)
 
@@ -566,4 +562,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()
