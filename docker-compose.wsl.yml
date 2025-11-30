@@ -5,6 +5,7 @@ services:
       args:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
+        UV_SYNC_EXTRAS: "cpu"
     container_name: blender
 
     command: sleep infinity

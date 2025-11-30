@@ -6,12 +6,9 @@ FROM ${BASE_IMAGE}
 # Set environment variables to non-interactive to avoid prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Add build arguments for user and group IDs to match the host user
-ARG UID=1000
-ARG GID=1000
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     libx11-6 \
     libxxf86vm1 \
     libxcursor1 \
@@ -57,6 +54,10 @@ RUN wget -O blender.tar.xz ${BLENDER_URL} && \
 # Add Blender to the system's PATH for all users
 ENV PATH="/opt/blender:${PATH}"
 
+# Add build arguments for user and group IDs to match the host user
+ARG UID=1000
+ARG GID=1000
+
 # Create a non-root user and grant passwordless sudo access
 RUN groupadd -g ${GID} blender && \
     useradd -m -u ${UID} -g ${GID} -s /bin/bash blender && \
@@ -73,14 +74,16 @@ WORKDIR /home/blender/workspace
 ENV PATH="/home/blender/.local/bin:${PATH}"
 
 # Install uv
-RUN wget -qO- https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# # --- INSTALL PYTHON DEPENDENCIES ---
+ARG UV_SYNC_EXTRAS=cpu
+
+# --- INSTALL PYTHON DEPENDENCIES ---
 # Copy Python requirements and install them
-COPY pyproject.toml .
-COPY uv.lock .
-COPY README.md .
-RUN uv sync && rm pyproject.toml uv.lock README.md
+COPY --chown=blender:blender pyproject.toml .
+COPY --chown=blender:blender uv.lock .
+COPY --chown=blender:blender README.md .
+RUN uv sync --extra ${UV_SYNC_EXTRAS} && rm pyproject.toml uv.lock README.md
 
 # Copy over an example script that uses blenderproc
 COPY scripts/blenderproc_init.py .
