@@ -6,8 +6,14 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "blenderproc>=2.8.0",
+    "h5py>=3.15.1",
+    "matplotlib>=3.10.7",
+    "numpy>=2.2.6",
+    "opencv-python>=4.11.0.86",
+    "requests>=2.32.5",
     "tensorboard>=2.20.0",
     "tqdm>=4.67.1",
+    "trimesh>=4.10.0",
 ]
 
 [project.scripts]
