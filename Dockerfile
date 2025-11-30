@@ -42,14 +42,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon-x11-dev \
     && rm -rf /var/lib/apt/lists/*
 
+ARG INSTALL_BLENDER=false
 # Set the Blender download URL
 ARG BLENDER_URL=https://mirror.clarkson.edu/blender/release/Blender4.5/blender-4.5.2-linux-x64.tar.xz
 
 # Download and extract Blender
-RUN wget -O blender.tar.xz ${BLENDER_URL} && \
+RUN if [ "$INSTALL_BLENDER" = "true" ]; then \
+    wget -O blender.tar.xz ${BLENDER_URL} && \
     mkdir -p /opt/blender && \
     tar -xvf blender.tar.xz -C /opt/blender --strip-components=1 && \
-    rm blender.tar.xz
+    rm blender.tar.xz ; \
+    else \
+        echo "Skipping Blender installation." ; \
+    fi
 
 # Add Blender to the system's PATH for all users
 ENV PATH="/opt/blender:${PATH}"
