@@ -1,0 +1,155 @@
+# ===================================================================
+# Configuration for Synthetic 6DoF Mug Pose Data Generator
+# ===================================================================
+
+# --- File Paths ---
+paths:
+  # Base directory for relative paths (can be overridden)
+  base_dir: "/home/blender/workspace"
+  # Input data paths
+  model_dir: "data/ModelNet40_canonicalized"
+  keypoint_path: "annotations/canonical_keypoints.json"
+  coco_dir: "data/train2017"
+  texture_dir: "data/dtd/images"
+  # Output directories
+  output_dir: "output/output3"
+  debug_dir: "debug/debug3"
+  log_file: "logs/parallel-3.log"
+
+# --- Generation Settings ---
+generation:
+  num_samples: 5
+  seed: 3
+  image_resolution:
+    width: 640
+    height: 480
+  # Ratio of samples that will be "negative" (background only)
+  negative_sample_ratio: 0.0
+
+# --- Camera Parameters ---
+camera:
+  # Distance from camera to the point of interest (object center)
+  radius:
+    min: 0.25
+    max: 1.0
+  # Camera elevation angle in degrees
+  elevation:
+    min: -80
+    max: 80
+  # Max in-plane rotation in radians (+/- this value)
+  inplane_rotation_range: 0.75
+  # Max offset for the camera's point-of-interest as a fraction of camera distance.
+  # This shifts the object's position within the frame.
+  poi_offset_fraction: 0.2
+  # Base camera intrinsics (Kinect-like, scaled to image_resolution)
+  intrinsics:
+    base:
+      fx: 572.4114
+      fy: 573.57043
+      cx: 325.2611
+      cy: 242.04899
+    # Random variations applied to base intrinsics
+    variation:
+      focal_scale:
+        min: 0.97
+        max: 1.03
+      principal_point: 10 # in pixels
+
+# --- Object Parameters ---
+object:
+  # Canoncalized models fit within a 2x2x2 cube, not a 1x1x1 cube
+  canonicalization_scale: 2.0
+  # Base size in meters before random scaling is applied
+  base_scale: 0.1
+  # Multiplicative scaling factor applied to base_scale
+  scale_variation:
+    min: 0.85
+    max: 1.15
+  # Pose randomization ranges in world coordinates
+  location_range:
+    x: [-0.5, 0.5]
+    y: [-0.5, 0.5]
+    z: [-0.3, 0.3]
+  rotation_range_rad: # Euler angles in radians
+    x: [-1.047, 1.047] # -pi/3 to pi/3
+    y: [-1.047, 1.047] # -pi/3 to pi/3
+    z: [-6.283, 6.283] # -2*pi to 2*pi
+
+# --- Ground Truth & Labels ---
+heatmaps:
+  size: 64
+  sigma: 2.0
+  keypoint_names:
+    - "handle_top"
+    - "handle_bottom"
+    - "rim_center"
+    - "base_center"
+    - "rim_front"
+    - "rim_back"
+    - "rim_left"
+    - "rim_right"
+
+# --- Domain Randomization ---
+domain_randomization:
+  subsurface_probability: 0.3
+
+  # Distractor object parameters
+  distractors:
+    probability: 0.4
+    count_range: [1, 3]
+    scale_range: [0.05, 0.3]
+    # Placement shell around the main object
+    radius:
+      min: 0.25
+      max: 0.50
+    height_offset_range: [-0.3, 0.3]
+
+  # Lighting randomization
+  lighting:
+    # Additional random lights (excluding ambient)
+    count_range: [2, 4]
+    types: ["SUN", "POINT", "SPOT"]
+    radius_range: [1.0, 4.0] # Distance from object
+    color_range: [0.8, 1.0] # Per channel
+    energy:
+      sun: [0.5, 2.0]
+      point: [40, 200]
+      spot: [40, 200]
+    # Ambient light parameters
+    ambient:
+      location: [0, 0, 2.5] # 0.1 (base_scale) * 25
+      energy_range: [0.1, 0.3]
+
+  # Material randomization for the main object
+  materials:
+    # Probabilities for [PBR, solid, textured]
+    type_probabilities: [0.15, 0.15, 0.7]
+    color_range: [0.1, 0.9]
+    roughness_range: [0.0, 1.0]
+    metallic_range: [0.0, 1.0]
+    textures:
+      # Probability of using an image texture vs. a procedural one
+      application_prob: 0.7
+      procedural_types: ["stripes", "checker"]
+
+  # Camera/sensor effects
+  sensor_noise:
+    shot_noise_range: [0.005, 0.02]
+    read_noise_range: [0.002, 0.01]
+    color_shift:
+      probability: 0.15
+      range: [0.97, 1.03]
+  motion_blur:
+    probability: 0.05
+    shutter_range: [0.1, 0.5]
+  depth_of_field:
+    probability: 0.15
+    aperture_range: [1.0, 4.0]
+
+# --- Validation and Filtering ---
+validation:
+  # Max occlusion before discarding a sample (1.0 = no occlusion)
+  # A value of 0.1 means up to 10% of the object can be occluded.
+  max_occlusion_allowable: 0.1
+  # Minimum fraction of the object's bounding box that must be visible in the frame
+  min_bbox_visible_fraction: 0.50
