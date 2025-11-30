@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 # =======================================================================================
 
 
-def setup_logging(log_level):
-    """Configure logging with timestamp and level."""
+def setup_logging(log_level, log_file=None):
+    """Configure logging with timestamp, level, and optional file output."""
     # Create formatter
     formatter = logging.Formatter(
         "[%(levelname)s] [%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
@@ -50,6 +50,16 @@ def setup_logging(log_level):
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
+
+    # File handler
+    if log_file:
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        file_handler = logging.FileHandler(str(log_path), mode="w")
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     return logger
 
@@ -803,14 +813,14 @@ def main():
     )
     args = parser.parse_args()
 
-    logger = setup_logging(args.log_level)
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+
+    logger = setup_logging(args.log_level, config["paths"]["log_file"])
 
     logger.info("=" * 70)
     logger.info("Synthetic 6DoF Mug Pose Data Generator")
     logger.info("=" * 70)
-
-    with open(args.config, "r") as f:
-        config = yaml.safe_load(f)
 
     IMAGE_WIDTH = config["generation"]["image_resolution"]["width"]
     IMAGE_HEIGHT = config["generation"]["image_resolution"]["height"]
