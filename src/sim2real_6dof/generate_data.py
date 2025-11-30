@@ -481,7 +481,7 @@ def load_texture_images(texture_dir):
             texture_images.extend(subdir.glob("*.jpg"))
             texture_images.extend(subdir.glob("*.png"))
 
-    return texture_images if texture_images else None
+    return sorted(texture_images) if texture_images else None
 
 
 def validate_pose_data(
@@ -843,13 +843,13 @@ def main():
     # Load assets
     logger.info(f"Loading assets...")
 
-    models = list(Path(config["paths"]["model_dir"]).glob("*.obj"))
+    models = sorted(list(Path(config["paths"]["model_dir"]).glob("*.obj")))
     if not models:
         raise RuntimeError(
             f"No annotated models found in {config['paths']['model_dir']}"
         )
 
-    coco_images = list(Path(config["paths"]["coco_dir"]).glob("*.jpg"))
+    coco_images = sorted(list(Path(config["paths"]["coco_dir"]).glob("*.jpg")))
     if not coco_images:
         raise RuntimeError(
             f"No background images found in {config['paths']['coco_dir']}"
