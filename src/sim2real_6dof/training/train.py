@@ -476,7 +476,7 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=os.cpu_count(),
+        default=1,
         help="Number of data loading workers",
     )
     parser.add_argument(
