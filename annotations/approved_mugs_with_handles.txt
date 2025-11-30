@@ -9,7 +9,6 @@ ModelNet40/cup/train/cup_0001.off
 ModelNet40/cup/train/cup_0003.off
 ModelNet40/cup/train/cup_0008.off
 ModelNet40/cup/train/cup_0010.off
-ModelNet40/cup/train/cup_0012.off
 ModelNet40/cup/train/cup_0013.off
 ModelNet40/cup/train/cup_0014.off
 ModelNet40/cup/train/cup_0018.off
@@ -24,7 +23,6 @@ ModelNet40/cup/train/cup_0040.off
 ModelNet40/cup/train/cup_0044.off
 ModelNet40/cup/train/cup_0049.off
 ModelNet40/cup/train/cup_0052.off
-ModelNet40/cup/train/cup_0056.off
 ModelNet40/cup/train/cup_0057.off
 ModelNet40/cup/train/cup_0059.off
 ModelNet40/cup/train/cup_0062.off
