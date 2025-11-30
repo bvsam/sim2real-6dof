@@ -1,8 +1,10 @@
-# sim2real-6d
+# sim2real-6dof
 
 Sim to Real 6 degrees of freedom (6DOF) pose estimation.
 
-## Running (WSL)
+## Running
+
+### Environment Setup (WSL)
 
 1. If not already done, run the compose file to start things up
 
@@ -32,4 +34,20 @@ docker compose start
 
 ```bash
 docker compose down
+```
+
+### Data Setup
+
+Run the `setup.py` script to download and setup input datasets for data generation
+
+```bash
+uv run scripts/setup.py
+```
+
+### Data Generation
+
+Run the `generata_data.py` script with `blenderproc run`
+
+```bash
+uv run blenderproc run src/sim2real_6dof/generate_data.py -c configs/config.yaml
 ```
