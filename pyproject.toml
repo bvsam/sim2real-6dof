@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "blenderproc>=2.8.0",
+    "tensorboard>=2.20.0",
     "tqdm>=4.67.1",
 ]
 
