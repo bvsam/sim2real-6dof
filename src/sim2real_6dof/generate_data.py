@@ -879,6 +879,7 @@ def main():
     logger.info("=" * 70)
 
     successful_samples = 0
+    successful_negative_samples = 0
 
     with tqdm.tqdm(total=NUM_SAMPLES, desc="Generating samples", unit="sample") as pbar:
         while successful_samples < NUM_SAMPLES:
@@ -910,6 +911,7 @@ def main():
                 )
                 save_sample_to_hdf5(data, OUTPUT_DIR)
                 successful_samples += 1
+                successful_negative_samples += 1
                 logger.info("Generated negative sample")
                 pbar.update(1)
                 continue
@@ -1396,7 +1398,11 @@ def main():
 
     logger.info("=" * 70)
     logger.info(f"✓ Generation complete!")
-    logger.info(f"  Samples generated: {NUM_SAMPLES}")
+    logger.info(f"  Samples requested: {NUM_SAMPLES}")
+    logger.info(f"  Samples successfully generated: {successful_samples}")
+    logger.info(
+        f"  Negative samples successfully generated: {successful_negative_samples}"
+    )
     logger.info(f"  Output directory: {OUTPUT_DIR}")
     if args.debug:
         logger.info(f"  Debug images: {DEBUG_DIR}")
