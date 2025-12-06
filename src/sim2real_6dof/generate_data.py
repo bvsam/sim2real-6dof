@@ -851,7 +851,7 @@ def main():
         Path(DEBUG_DIR).mkdir(exist_ok=True, parents=True)
 
     # Load assets
-    logger.info(f"Loading assets...")
+    logger.info("Loading assets...")
 
     models = sorted(list(Path(config["paths"]["model_dir"]).glob("*.obj")))
     if not models:
@@ -1289,7 +1289,7 @@ def main():
             dark_pixel_fraction_threshold = 0.2
             if dark_pixel_fraction > dark_pixel_fraction_threshold:
                 logger.warning(
-                    f"At least {dark_pixel_fraction_threshold*100}% of image is very dark . Abandoning sample..."
+                    f"At least {dark_pixel_fraction_threshold * 100}% of image is very dark . Abandoning sample..."
                 )
                 continue
 
@@ -1316,7 +1316,7 @@ def main():
 
             if not is_in_frame:
                 logger.warning(
-                    f"Object not sufficiently in frame (only {visible_fraction*100:.1f}% of bbox visible). "
+                    f"Object not sufficiently in frame (only {visible_fraction * 100:.1f}% of bbox visible). "
                     f"Abandoning sample..."
                 )
                 continue
@@ -1328,13 +1328,13 @@ def main():
             nocs_pixels_count = np.count_nonzero(nocs_mask)
             if nocs_pixels_count == 0:
                 logger.warning(
-                    f"Found 0 non-black NOCS pixels in output. Abandoning sample..."
+                    "Found 0 non-black NOCS pixels in output. Abandoning sample..."
                 )
                 continue
             coverage_score = np.sum(mug_mask) / nocs_pixels_count
             if coverage_score < (1 - config["validation"]["max_occlusion_allowable"]):
                 logger.warning(
-                    f"Object is {(1-coverage_score)*100}% occluded. Abandoning sample..."
+                    f"Object is {(1 - coverage_score) * 100}% occluded. Abandoning sample..."
                 )
                 continue
 
@@ -1397,7 +1397,7 @@ def main():
             pbar.update(1)
 
     logger.info("=" * 70)
-    logger.info(f"✓ Generation complete!")
+    logger.info("✓ Generation complete!")
     logger.info(f"  Samples requested: {NUM_SAMPLES}")
     logger.info(f"  Samples successfully generated: {successful_samples}")
     logger.info(

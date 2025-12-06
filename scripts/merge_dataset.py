@@ -61,7 +61,7 @@ def merge_datasets(source_dirs, output_dir):
     duplicates_dropped = 0
     corrupt_files = 0
 
-    print(f"Merging and re-indexing...")
+    print("Merging and re-indexing...")
     for src_file in tqdm(all_files, unit="sample"):
         try:
             # Check for duplicates using Semantic Hashing
@@ -86,7 +86,7 @@ def merge_datasets(source_dirs, output_dir):
             corrupt_files += 1
 
     print("=" * 60)
-    print(f"Merge Complete.")
+    print("Merge Complete.")
     print(f"Total Unique Samples: {global_counter}")
     print(f"Duplicates Dropped: {duplicates_dropped}")
     print(f"Corrupt/Skipped: {corrupt_files}")
