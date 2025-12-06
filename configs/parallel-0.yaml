@@ -41,19 +41,19 @@ camera:
   # Max offset for the camera's point-of-interest as a fraction of camera distance.
   # This shifts the object's position within the frame.
   poi_offset_fraction: 0.2
-  # Base camera intrinsics (Kinect-like, scaled to image_resolution)
+  # Base camera intrinsics (projection matrix of calibrated Realsense D435)
   intrinsics:
     base:
-      fx: 572.4114
-      fy: 573.57043
-      cx: 325.2611
-      cy: 242.04899
+      fx: 717.540222
+      fy: 725.762451
+      cx: 355.096277
+      cy: 251.336667
     # Random variations applied to base intrinsics
     variation:
       focal_scale:
         min: 0.97
         max: 1.03
-      principal_point: 10 # in pixels
+      principal_point: 20 # in pixels
 
 # --- Object Parameters ---
 object:
