@@ -39,7 +39,7 @@ def merge_datasets(source_dirs, output_dir):
         path = Path(s_dir)
         if path.exists():
             # Sort locally to ensure deterministic order from each folder
-            files = sorted(list(path.glob("*.hdf5")))
+            files = list(path.glob("*.hdf5")).sort(key=lambda x: int(x.stem))
             print(f"Found {len(files)} files in '{s_dir}'")
             all_files.extend(files)
         else:
