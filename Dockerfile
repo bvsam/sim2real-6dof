@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwayland-client0 \
     libxkbcommon0 \
     wget \
+    p7zip-full \
+    unzip \
     tar \
     xz-utils \
     sudo \
