@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "blenderproc>=2.8.0",
     "h5py>=3.15.1",
+    "huggingface-hub>=1.2.3",
     "matplotlib>=3.10.7",
     "numpy>=2.2.6",
     "opencv-python>=4.11.0.86",
