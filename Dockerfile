@@ -87,10 +87,8 @@ ARG UV_SYNC_EXTRAS=cpu
 
 # --- INSTALL PYTHON DEPENDENCIES ---
 # Copy Python requirements and install them
-COPY --chown=blender:blender pyproject.toml .
-COPY --chown=blender:blender uv.lock .
-COPY --chown=blender:blender README.md .
-RUN uv sync --extra ${UV_SYNC_EXTRAS} && rm pyproject.toml uv.lock README.md
+COPY pyproject.toml uv.lock README.md .
+RUN uv sync --frozen --no-dev --no-cache --extra ${UV_SYNC_EXTRAS} && rm pyproject.toml uv.lock README.md
 
 # Copy over an example script that uses blenderproc
 COPY scripts/blenderproc_init.py .
