@@ -51,7 +51,6 @@ class NOCSTrainer:
         weight_decay: float = 1e-4,
         # Checkpointing
         checkpoint_interval: int = 1000,
-        validation_interval: int = 250,
         log_interval: int = 100,
     ):
         self.model = model.to(device)
@@ -99,7 +98,6 @@ class NOCSTrainer:
 
         # Tracking
         self.checkpoint_interval = checkpoint_interval
-        self.validation_interval = validation_interval
         self.log_interval = log_interval
 
         # Tensorboard
@@ -279,11 +277,9 @@ class NOCSTrainer:
 
         for stage_idx, stage in enumerate(self.stages):
             self._setup_stage(stage_idx)
-
             stage_epochs = stage["epochs"]
-
             for _ in tqdm(range(stage_epochs), desc=stage["name"]):
-                for images, targets in tqdm(self.train_loader):
+                for images, targets in tqdm(self.train_loader, desc="Training"):
                     self.train_iteration(images, targets)
 
                     # Train iteration
@@ -302,20 +298,15 @@ class NOCSTrainer:
                         for k, v in losses.items():
                             self.writer.add_scalar(f"train/{k}", v, iteration)
 
-                    # Validation
-                    if iteration % self.validation_interval == 0:
-                        val_losses = self.validate()
-                        val_str = " | ".join(
-                            [f"{k}: {v:.4f}" for k, v in val_losses.items()]
-                        )
-                        logger.info(f"[Iter {iteration}] Validation: {val_str}")
-
-                        for k, v in val_losses.items():
-                            self.writer.add_scalar(f"val/{k}", v, iteration)
-
                     # Checkpointing
                     if iteration % self.checkpoint_interval == 0:
                         self.save_checkpoint(iteration, stage_idx)
+
+                val_losses = self.validate()
+                val_str = " | ".join([f"{k}: {v:.4f}" for k, v in val_losses.items()])
+                logger.info(f"[Iter {iteration}] Validation: {val_str}")
+                for k, v in val_losses.items():
+                    self.writer.add_scalar(f"val/{k}", v, iteration)
 
             # Save at end of stage
             self.save_checkpoint(iteration, stage_idx)
@@ -445,7 +436,6 @@ def main():
     parser.add_argument("--stage3-epochs", type=int, default=10)
     # Checkpointing and Logging
     parser.add_argument("--checkpoint-interval", type=int, default=1000)
-    parser.add_argument("--validation-interval", type=int, default=250)
     parser.add_argument("--log-interval", type=int, default=100)
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
     args = parser.parse_args()
@@ -512,7 +502,6 @@ def main():
         stage2_lr=initial_lr / 10,
         stage3_lr=initial_lr / 10,
         checkpoint_interval=args.checkpoint_interval,
-        validation_interval=args.validation_interval,
         log_interval=args.log_interval,
     )
 
