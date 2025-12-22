@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from sim2real_6dof.training.data.dataset import NOCSDataset
+from sim2real_6dof.training.data.dataset import create_webdataset
 from sim2real_6dof.training.losses.nocs_losses import nocs_loss
 from sim2real_6dof.training.model.nocs_maskrcnn import NOCSMaskRCNN
 
@@ -33,18 +33,16 @@ class NOCSTrainer:
     def __init__(
         self,
         model: NOCSMaskRCNN,
-        train_dataset: NOCSDataset,
-        val_dataset: NOCSDataset,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
         output_dir: str,
         device: str = "cuda",
-        batch_size: int = 2,
-        num_workers: int = 4,
         # Loss weights
         loss_weight_nocs: float = 1.0,
         # Training stages
-        stage1_iterations: int = 10000,
-        stage2_iterations: int = 3000,
-        stage3_iterations: int = 70000,
+        stage1_epochs: int = 1,
+        stage2_epochs: int = 1,
+        stage3_epochs: int = 10,
         stage1_lr: float = 0.001,
         stage2_lr: float = 0.0001,
         stage3_lr: float = 0.00001,
@@ -57,11 +55,8 @@ class NOCSTrainer:
         log_interval: int = 100,
     ):
         self.model = model.to(device)
-        self.train_dataset = train_dataset
-        self.val_dataset = val_dataset
         self.output_dir = Path(output_dir)
         self.device = device
-        self.batch_size = batch_size
 
         # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -69,25 +64,8 @@ class NOCSTrainer:
         self.checkpoint_dir.mkdir(exist_ok=True)
 
         # Data loaders
-        # Note: torchvision models handle batching internally, so batch_size=1 for dataloader
-        # and we'll manually batch inside
-        self.train_loader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-            collate_fn=self._collate_fn,
-            pin_memory=True,
-        )
-
-        self.val_loader = DataLoader(
-            val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            collate_fn=self._collate_fn,
-            pin_memory=True,
-        )
+        self.train_loader = train_loader
+        self.val_loader = val_loader
 
         # Loss functions
         self.loss_weight_nocs = loss_weight_nocs
@@ -96,19 +74,19 @@ class NOCSTrainer:
         self.stages = [
             {
                 "name": "Stage 1",
-                "iterations": stage1_iterations,
+                "epochs": stage1_epochs,
                 "lr": stage1_lr,
                 "freeze_stage": 5,  # Freeze all ResNet
             },
             {
                 "name": "Stage 2",
-                "iterations": stage2_iterations,
+                "epochs": stage2_epochs,
                 "lr": stage2_lr,
                 "freeze_stage": 4,  # Freeze below C4
             },
             {
                 "name": "Stage 3",
-                "iterations": stage3_iterations,
+                "epochs": stage3_epochs,
                 "lr": stage3_lr,
                 "freeze_stage": 3,  # Freeze below C3
             },
@@ -120,8 +98,6 @@ class NOCSTrainer:
         self.optimizer = None
 
         # Tracking
-        self.current_stage = 0
-        self.current_iteration = 0
         self.checkpoint_interval = checkpoint_interval
         self.validation_interval = validation_interval
         self.log_interval = log_interval
@@ -129,63 +105,9 @@ class NOCSTrainer:
         # Tensorboard
         self.writer = SummaryWriter(self.output_dir / "tensorboard")
 
-        logger.info(f"Trainer initialized:")
+        logger.info("Trainer initialized:")
         logger.info(f"  Output directory: {self.output_dir}")
-        logger.info(f"  Training samples: {len(train_dataset)}")
-        logger.info(f"  Validation samples: {len(val_dataset)}")
-        logger.info(f"  Batch size: {batch_size}")
         logger.info(f"  Device: {device}")
-
-    def _collate_fn(self, batch):
-        """
-        Collate function for torchvision model format.
-
-        Returns:
-            images: List of [3, H, W] tensors
-            targets: List of dicts with 'boxes', 'labels', 'masks', 'nocs'
-        """
-        images = []
-        targets = []
-
-        for item in batch:
-            # Image: [H, W, 3] -> [3, H, W], normalized to [0, 1]
-            img = torch.from_numpy(item["image"]).permute(2, 0, 1).float() / 255.0
-            images.append(img)
-
-            # Extract masks and create target dict
-            mask = item["masks"][:, :, 0]  # [H, W, 1] -> [H, W]
-
-            target = {}
-
-            if mask.sum() > 0:
-                # Bounding box from mask
-                ys, xs = np.where(mask > 0)
-                x1, y1 = xs.min(), ys.min()
-                x2, y2 = xs.max(), ys.max()
-                target["boxes"] = torch.tensor([[x1, y1, x2, y2]], dtype=torch.float32)
-
-                # Labels
-                target["labels"] = torch.tensor([1], dtype=torch.int64)  # Class 1 (mug)
-
-                # Masks: [H, W] -> [1, H, W]
-                target["masks"] = torch.from_numpy(mask).unsqueeze(0).to(torch.uint8)
-
-                # NOCS: [H, W, 1, 3] -> [1, 3, H, W]
-                coords = item["coords"][:, :, 0, :]  # [H, W, 3]
-                target["nocs"] = (
-                    torch.from_numpy(coords).permute(2, 0, 1).unsqueeze(0).float()
-                )
-            else:
-                # Empty sample (negative)
-                h, w = mask.shape
-                target["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
-                target["labels"] = torch.zeros((0,), dtype=torch.int64)
-                target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
-                target["nocs"] = torch.zeros((0, 3, h, w), dtype=torch.float32)
-
-            targets.append(target)
-
-        return images, targets
 
     def _setup_stage(self, stage_idx: int):
         """Setup model and optimizer for a training stage."""
@@ -193,7 +115,7 @@ class NOCSTrainer:
 
         logger.info("=" * 70)
         logger.info(f"Setting up {stage['name']}")
-        logger.info(f"  Iterations: {stage['iterations']}")
+        logger.info(f"  Epochs: {stage['epochs']}")
         logger.info(f"  Learning rate: {stage['lr']}")
         logger.info(f"  Freeze stage: {stage['freeze_stage']}")
         logger.info("=" * 70)
@@ -358,18 +280,15 @@ class NOCSTrainer:
         for stage_idx, stage in enumerate(self.stages):
             self._setup_stage(stage_idx)
 
-            stage_iterations = stage["iterations"]
-            stage_iter = 0
+            stage_epochs = stage["epochs"]
 
-            pbar = tqdm(total=stage_iterations, desc=stage["name"])
+            for _ in tqdm(range(stage_epochs), desc=stage["name"]):
+                for images, targets in tqdm(self.train_loader):
+                    self.train_iteration(images, targets)
 
-            while stage_iter < stage_iterations:
-                for images, targets in self.train_loader:
                     # Train iteration
                     losses = self.train_iteration(images, targets)
-
                     iteration += 1
-                    stage_iter += 1
 
                     # Logging
                     if iteration % self.log_interval == 0:
@@ -377,7 +296,7 @@ class NOCSTrainer:
                         log_str += " | ".join(
                             [f"{k}: {v:.4f}" for k, v in losses.items()]
                         )
-                        pbar.set_postfix_str(log_str)
+                        logger.info(log_str)
 
                         # Tensorboard
                         for k, v in losses.items():
@@ -398,18 +317,63 @@ class NOCSTrainer:
                     if iteration % self.checkpoint_interval == 0:
                         self.save_checkpoint(iteration, stage_idx)
 
-                    pbar.update(1)
-
-                    if stage_iter >= stage_iterations:
-                        break
-
-            pbar.close()
-
             # Save at end of stage
             self.save_checkpoint(iteration, stage_idx)
 
         logger.info("Training complete!")
         self.writer.close()
+
+
+def _collate_fn(batch):
+    """
+    Collate function for torchvision model format.
+
+    Returns:
+        images: List of [3, H, W] tensors
+        targets: List of dicts with 'boxes', 'labels', 'masks', 'nocs'
+    """
+    images = []
+    targets = []
+
+    for item in batch:
+        # Image: [H, W, 3] -> [3, H, W], normalized to [0, 1]
+        img = torch.from_numpy(item["image"]).permute(2, 0, 1).float() / 255.0
+        images.append(img)
+
+        # Extract masks and create target dict
+        mask = item["masks"][:, :, 0]  # [H, W, 1] -> [H, W]
+
+        target = {}
+
+        if mask.sum() > 0:
+            # Bounding box from mask
+            ys, xs = np.where(mask > 0)
+            x1, y1 = xs.min(), ys.min()
+            x2, y2 = xs.max(), ys.max()
+            target["boxes"] = torch.tensor([[x1, y1, x2, y2]], dtype=torch.float32)
+
+            # Labels
+            target["labels"] = torch.tensor([1], dtype=torch.int64)  # Class 1 (mug)
+
+            # Masks: [H, W] -> [1, H, W]
+            target["masks"] = torch.from_numpy(mask).unsqueeze(0).to(torch.uint8)
+
+            # NOCS: [H, W, 1, 3] -> [1, 3, H, W]
+            coords = item["coords"][:, :, 0, :]  # [H, W, 3]
+            target["nocs"] = (
+                torch.from_numpy(coords).permute(2, 0, 1).unsqueeze(0).float()
+            )
+        else:
+            # Empty sample (negative)
+            h, w = mask.shape
+            target["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
+            target["labels"] = torch.zeros((0,), dtype=torch.int64)
+            target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
+            target["nocs"] = torch.zeros((0, 3, h, w), dtype=torch.float32)
+
+        targets.append(target)
+
+    return images, targets
 
 
 def setup_logging(log_level=logging.INFO, log_file=None):
@@ -429,19 +393,12 @@ def setup_logging(log_level=logging.INFO, log_file=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Train NOCS R-CNN")
-
     # Data
     parser.add_argument(
-        "--train-data",
+        "--repo-id",
         type=str,
         required=True,
-        help="Path to training data directory (HDF5 files)",
-    )
-    parser.add_argument(
-        "--val-data",
-        type=str,
-        required=True,
-        help="Path to validation data directory (HDF5 files)",
+        help="HF dataset repo ID to use for webdataset",
     )
     parser.add_argument(
         "--output-dir",
@@ -449,7 +406,6 @@ def main():
         default="./output/training",
         help="Output directory for checkpoints and logs",
     )
-
     # Model
     parser.add_argument(
         "--num-classes",
@@ -469,7 +425,6 @@ def main():
         default=True,
         help="Use pretrained ResNet backbone",
     )
-
     # Training
     parser.add_argument("--batch-size", type=int, default=2, help="Batch size")
     parser.add_argument(
@@ -479,27 +434,20 @@ def main():
         help="Number of data loading workers",
     )
     parser.add_argument(
+        "--prefetch-factor", type=int, default=None, help="Prefetch factor"
+    )
+    parser.add_argument(
         "--device", type=str, default="cuda", help="Device to use (cuda or cpu)"
     )
-
-    # Loss weights
-    parser.add_argument("--loss-weight-nocs", type=float, default=1.0)
-
-    # Training stages (from NOCS paper)
-    parser.add_argument("--stage1-iter", type=int, default=10000)
-    parser.add_argument("--stage2-iter", type=int, default=3000)
-    parser.add_argument("--stage3-iter", type=int, default=70000)
-    parser.add_argument("--stage1-lr", type=float, default=0.001)
-    parser.add_argument("--stage2-lr", type=float, default=0.0001)
-    parser.add_argument("--stage3-lr", type=float, default=0.00001)
-
-    # Checkpointing
+    # Training stages
+    parser.add_argument("--stage1-epochs", type=int, default=1)
+    parser.add_argument("--stage2-epochs", type=int, default=1)
+    parser.add_argument("--stage3-epochs", type=int, default=10)
+    # Checkpointing and Logging
     parser.add_argument("--checkpoint-interval", type=int, default=1000)
     parser.add_argument("--validation-interval", type=int, default=250)
-
     parser.add_argument("--log-interval", type=int, default=100)
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
-
     args = parser.parse_args()
 
     # Setup logging
@@ -514,17 +462,31 @@ def main():
 
     # Load datasets
     logger.info("Loading datasets...")
-    train_dataset = NOCSDataset(
-        data_dir=args.train_data,
-        split="train",
-        include_negatives=False,
-        load_poses=False,
+    repo_id = args.repo_id
+    N_SHARDS = 80
+    TRAIN_SPLIT = 0.8
+    n_train_shards = int(N_SHARDS * TRAIN_SPLIT)
+    train_shard_ids = [i for i in range(n_train_shards)]
+    val_shard_ids = [i for i in range(n_train_shards, N_SHARDS)]
+    train_dataset = create_webdataset(repo_id, shard_ids=train_shard_ids, shuffle=False)
+    val_dataset = create_webdataset(repo_id, shard_ids=val_shard_ids, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
+        collate_fn=_collate_fn,
+        pin_memory=True,
     )
-    val_dataset = NOCSDataset(
-        data_dir=args.val_data,
-        split="val",
-        include_negatives=False,
-        load_poses=False,
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
+        collate_fn=_collate_fn,
+        pin_memory=True,
     )
 
     # Create model
@@ -535,22 +497,20 @@ def main():
         pretrained=args.pretrained,
     )
 
+    initial_lr = (args.batch_size / 2) * 0.001
     # Create trainer
     trainer = NOCSTrainer(
         model=model,
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
+        train_loader=train_loader,
+        val_loader=val_loader,
         output_dir=args.output_dir,
         device=args.device,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        loss_weight_nocs=args.loss_weight_nocs,
-        stage1_iterations=args.stage1_iter,
-        stage2_iterations=args.stage2_iter,
-        stage3_iterations=args.stage3_iter,
-        stage1_lr=args.stage1_lr,
-        stage2_lr=args.stage2_lr,
-        stage3_lr=args.stage3_lr,
+        stage1_epochs=args.stage1_epochs,
+        stage2_epochs=args.stage2_epochs,
+        stage3_epochs=args.stage3_epochs,
+        stage1_lr=initial_lr,
+        stage2_lr=initial_lr / 10,
+        stage3_lr=initial_lr / 10,
         checkpoint_interval=args.checkpoint_interval,
         validation_interval=args.validation_interval,
         log_interval=args.log_interval,
