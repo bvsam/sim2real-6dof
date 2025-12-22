@@ -10,7 +10,6 @@ Implements the 3-stage training schedule from the NOCS paper:
 import argparse
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Dict
@@ -466,7 +465,7 @@ def main():
     )
     parser.add_argument(
         "--pretrained",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="Use pretrained ResNet backbone",
     )
