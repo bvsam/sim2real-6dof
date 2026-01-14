@@ -248,7 +248,7 @@ def main():
     parser.add_argument(
         "--compile",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Compile model with torch before training",
     )
     # Training
