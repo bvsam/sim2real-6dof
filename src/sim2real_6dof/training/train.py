@@ -16,6 +16,7 @@ from typing import Dict
 
 import numpy as np
 import torch
+from huggingface_hub import get_token
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -435,7 +436,7 @@ def main():
     parser.add_argument("--stage2-epochs", type=int, default=1)
     parser.add_argument("--stage3-epochs", type=int, default=10)
     # Checkpointing and Logging
-    parser.add_argument("--checkpoint-interval", type=int, default=1000)
+    parser.add_argument("--checkpoint-interval", type=int, default=100)
     parser.add_argument("--log-interval", type=int, default=100)
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
     args = parser.parse_args()
@@ -458,8 +459,13 @@ def main():
     n_train_shards = int(N_SHARDS * TRAIN_SPLIT)
     train_shard_ids = [i for i in range(n_train_shards)]
     val_shard_ids = [i for i in range(n_train_shards, N_SHARDS)]
-    train_dataset = create_webdataset(repo_id, shard_ids=train_shard_ids, shuffle=False)
-    val_dataset = create_webdataset(repo_id, shard_ids=val_shard_ids, shuffle=False)
+    hf_token = get_token()
+    train_dataset = create_webdataset(
+        repo_id, shard_ids=train_shard_ids, shuffle=False, hf_token=hf_token
+    )
+    val_dataset = create_webdataset(
+        repo_id, shard_ids=val_shard_ids, shuffle=False, hf_token=hf_token
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
