@@ -24,3 +24,5 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix:cached
       - /usr/lib/wsl:/usr/lib/wsl:cached
       - ./:/home/blender/workspace
+
+    network_mode: "host"
