@@ -270,7 +270,7 @@ def main():
     parser.add_argument(
         "--stage-lrs",
         nargs="+",
-        type=int,
+        type=float,
         required=True,
         help="Learning rates to use during each training stage",
     )
@@ -314,6 +314,8 @@ def main():
     logger.info("=" * 70)
     logger.info("NOCS R-CNN Training")
     logger.info("=" * 70)
+    # PosixPath is not JSON serializable
+    args.output_dir = str(args.output_dir)
     logger.info(f"Arguments:\n{json.dumps(vars(args), indent=2)}")
 
     # Load datasets
@@ -373,12 +375,11 @@ def main():
             args.stage_epochs, args.stage_lrs, args.stage_freezes
         )
     ]
-    summary_writer = SummaryWriter(args.output_dir / "tensorboard")
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    args.checkpoint_dir = args.output_dir / "checkpoints"
+    summary_writer = SummaryWriter(output_dir / "tensorboard")
+    args.checkpoint_dir = output_dir / "checkpoints"
     args.checkpoint_dir.mkdir(exist_ok=True)
     logger.info("Trainer initialized:")
-    logger.info(f"  Output directory: {args.output_dir}")
+    logger.info(f"  Output directory: {output_dir}")
     logger.info(f"  Device: {args.device}")
 
     iteration_count = 0
