@@ -245,6 +245,12 @@ def main():
         default=True,
         help="Use pretrained ResNet backbone",
     )
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Compile model with torch before training",
+    )
     # Training
     parser.add_argument("--batch-size", type=int, default=2, help="Batch size")
     parser.add_argument(
@@ -364,6 +370,8 @@ def main():
         pretrained=args.pretrained,
     )
     model = model.to(args.device)
+    if args.compile:
+        model = torch.compile(model)
 
     # Setup training utils
     stages = [
