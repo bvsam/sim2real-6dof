@@ -165,38 +165,3 @@ class NOCSHead(nn.Module):
             )  # [N, 3, 28, 28]
 
         return coords
-
-
-if __name__ == "__main__":
-    print("Testing NOCS Head...")
-
-    # Test NOCS head alone
-    nocs_head = NOCSHead(
-        in_channels=256,
-        num_classes=2,
-        num_bins=32,
-        output_size=28,
-    )
-
-    # Dummy RoI features (5 RoIs from previous test)
-    roi_features = torch.randn(5, 256, 14, 14)
-
-    # Forward pass
-    nocs_logits = nocs_head(roi_features)
-
-    print(f"\nNOCS Head:")
-    print(f"  Input: {roi_features.shape}")
-    print(f"  Output logits: {nocs_logits.shape}")
-    print(f"  Expected: [5, 2, 3, 32, 28, 28]")
-    assert nocs_logits.shape == (5, 2, 3, 32, 28, 28)
-
-    # Test decoding
-    coords = nocs_head.decode_predictions(
-        nocs_logits, class_ids=torch.ones(5, dtype=torch.long)
-    )
-    print(f"  Decoded coords: {coords.shape}")
-    print(f"  Coord range: [{coords.min():.3f}, {coords.max():.3f}]")
-    assert coords.shape == (5, 3, 28, 28)
-    assert coords.min() >= 0.0 and coords.max() <= 1.0
-
-    print("\n✓ NOCS Head test passed!")

@@ -20,8 +20,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from sim2real_6dof.training.model.nocs_maskrcnn import NOCSMaskRCNN
-from sim2real_6dof.training.utils.pose_estimation import (
+from sim2real_6dof.model.nocs_maskrcnn import NOCSMaskRCNN
+from sim2real_6dof.utils.pose_estimation import (
     compute_rotation_error,
     compute_translation_error,
     umeyama_alignment,
@@ -582,7 +582,7 @@ def main():
 
     print(f"\nFound {len(detections)} detections")
     for i, det in enumerate(detections):
-        print(f"  Detection {i+1}:")
+        print(f"  Detection {i + 1}:")
         print(f"    Label: {det['label']}")
         print(f"    Score: {det['score']:.3f}")
         print(f"    BBox: {det['bbox']}")

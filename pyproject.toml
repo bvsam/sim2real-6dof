@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [project.scripts]
-train = "sim2real_6dof.training.train:main"
-inference = "sim2real_6dof.training.inference:main"
+train = "sim2real_6dof.train:main"
+inference = "sim2real_6dof.inference:main"
 
 [build-system]
 requires = ["hatchling"]
