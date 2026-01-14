@@ -363,6 +363,7 @@ def main():
         num_bins=args.num_bins,
         pretrained=args.pretrained,
     )
+    model = model.to(args.device)
 
     # Setup training utils
     stages = [
