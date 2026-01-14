@@ -21,9 +21,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from sim2real_6dof.training.data.dataset import create_webdataset
-from sim2real_6dof.training.losses.nocs_losses import nocs_loss
-from sim2real_6dof.training.model.nocs_maskrcnn import NOCSMaskRCNN
+from sim2real_6dof.data.dataset import create_webdataset
+from sim2real_6dof.losses.nocs_losses import nocs_loss
+from sim2real_6dof.model.nocs_maskrcnn import NOCSMaskRCNN
 
 logger = logging.getLogger(__name__)
 
@@ -280,9 +280,9 @@ class NOCSTrainer:
             self._setup_stage(stage_idx)
             stage_epochs = stage["epochs"]
             for _ in tqdm(range(stage_epochs), desc=stage["name"]):
-                for images, targets in tqdm(self.train_loader, desc="Training"):
-                    self.train_iteration(images, targets)
-
+                for images, targets in tqdm(
+                    self.train_loader, total=10, desc="Training"
+                ):
                     # Train iteration
                     losses = self.train_iteration(images, targets)
                     iteration += 1
