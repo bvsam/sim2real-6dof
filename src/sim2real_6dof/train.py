@@ -10,6 +10,7 @@ Implements the 3-stage training schedule from the NOCS paper:
 import argparse
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import Dict
@@ -28,292 +29,119 @@ from sim2real_6dof.model.nocs_maskrcnn import NOCSMaskRCNN
 logger = logging.getLogger(__name__)
 
 
-class NOCSTrainer:
-    """Trainer for NOCS R-CNN with 3-stage progressive training."""
+def train_iteration(model, optimizer, images, targets, device) -> Dict[str, float]:
+    model.train()
 
-    def __init__(
-        self,
-        model: NOCSMaskRCNN,
-        train_loader: DataLoader,
-        val_loader: DataLoader,
-        output_dir: str,
-        device: str = "cuda",
-        # Loss weights
-        loss_weight_nocs: float = 1.0,
-        # Training stages
-        stage1_epochs: int = 1,
-        stage2_epochs: int = 1,
-        stage3_epochs: int = 10,
-        stage1_lr: float = 0.001,
-        stage2_lr: float = 0.0001,
-        stage3_lr: float = 0.00001,
-        # Optimizer
-        momentum: float = 0.9,
-        weight_decay: float = 1e-4,
-        # Checkpointing
-        checkpoint_interval: int = 1000,
-        log_interval: int = 100,
+    # Move to device
+    images = [img.to(device) for img in images]
+    targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+
+    # Forward pass (model computes internal losses)
+    outputs = model(images, targets)
+    loss_dict = outputs["losses"]
+
+    # Compute NOCS loss
+    nocs_logits = outputs.get("nocs_logits")
+    loss_dict["loss_nocs"] = compute_nocs_loss(
+        model, nocs_logits, targets, device=device
+    )
+
+    # Total loss (sum all losses from dict)
+    total_loss = sum(loss for loss in loss_dict.values())
+
+    # Backward pass
+    optimizer.zero_grad()
+    total_loss.backward()
+
+    # Gradient clipping
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+
+    optimizer.step()
+
+    # Return loss values
+    loss_dict["total"] = total_loss
+    return {
+        k: v.item() if isinstance(v, torch.Tensor) else v for k, v in loss_dict.items()
+    }
+
+
+def compute_nocs_loss(model, nocs_logits, targets, device):
+    if nocs_logits is not None and nocs_logits.shape[0] > 0:
+        # Get stored data from RoI heads
+        nocs_proposals = model.model.roi_heads.nocs_proposals_storage
+        nocs_matched_idxs = model.model.roi_heads.nocs_matched_idxs_storage
+
+        # Extract GT data
+        gt_nocs = [t["nocs"] for t in targets]
+        gt_labels = [t["labels"] for t in targets]
+        gt_masks = [t["masks"] for t in targets]
+
+        # Compute NOCS loss
+        loss_nocs = nocs_loss(
+            nocs_logits,
+            nocs_proposals,
+            gt_nocs,
+            gt_masks,
+            gt_labels,
+            nocs_matched_idxs,
+        )
+        return loss_nocs
+    else:
+        return torch.tensor(0.0, device=device)
+
+
+@torch.no_grad()
+def validate(model, dataloader, device, len_dataloader=None) -> Dict[str, float]:
+    total_losses = {}
+    num_batches = 0
+
+    for images, targets in tqdm(
+        dataloader, total=len_dataloader, desc="Validation", leave=False
     ):
-        self.model = model.to(device)
-        self.output_dir = Path(output_dir)
-        self.device = device
-
-        # Create output directories
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.checkpoint_dir = self.output_dir / "checkpoints"
-        self.checkpoint_dir.mkdir(exist_ok=True)
-
-        # Data loaders
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-
-        # Loss functions
-        self.loss_weight_nocs = loss_weight_nocs
-
-        # Training stages
-        self.stages = [
-            {
-                "name": "Stage 1",
-                "epochs": stage1_epochs,
-                "lr": stage1_lr,
-                "freeze_stage": 5,  # Freeze all ResNet
-            },
-            {
-                "name": "Stage 2",
-                "epochs": stage2_epochs,
-                "lr": stage2_lr,
-                "freeze_stage": 4,  # Freeze below C4
-            },
-            {
-                "name": "Stage 3",
-                "epochs": stage3_epochs,
-                "lr": stage3_lr,
-                "freeze_stage": 3,  # Freeze below C3
-            },
-        ]
-
-        # Optimizer (will be reset for each stage)
-        self.momentum = momentum
-        self.weight_decay = weight_decay
-        self.optimizer = None
-
-        # Tracking
-        self.checkpoint_interval = checkpoint_interval
-        self.log_interval = log_interval
-
-        # Tensorboard
-        self.writer = SummaryWriter(self.output_dir / "tensorboard")
-
-        logger.info("Trainer initialized:")
-        logger.info(f"  Output directory: {self.output_dir}")
-        logger.info(f"  Device: {device}")
-
-    def _setup_stage(self, stage_idx: int):
-        """Setup model and optimizer for a training stage."""
-        stage = self.stages[stage_idx]
-
-        logger.info("=" * 70)
-        logger.info(f"Setting up {stage['name']}")
-        logger.info(f"  Epochs: {stage['epochs']}")
-        logger.info(f"  Learning rate: {stage['lr']}")
-        logger.info(f"  Freeze stage: {stage['freeze_stage']}")
-        logger.info("=" * 70)
-
-        # Freeze backbone stages
-        self.model.freeze_backbone_stages(stage["freeze_stage"])
-
-        # Create optimizer
-        self.optimizer = torch.optim.SGD(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=stage["lr"],
-            momentum=self.momentum,
-            weight_decay=self.weight_decay,
-        )
-
-        trainable_params = sum(
-            p.numel() for p in self.model.parameters() if p.requires_grad
-        )
-        total_params = sum(p.numel() for p in self.model.parameters())
-        logger.info(f"  Trainable parameters: {trainable_params:,} / {total_params:,}")
-
-    def train_iteration(self, images, targets) -> Dict[str, float]:
-        """Single training iteration."""
-        self.model.train()
-
         # Move to device
-        images = [img.to(self.device) for img in images]
-        targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
-
-        # Forward pass (model computes internal losses)
-        outputs = self.model(images, targets)
+        images = [img.to(device) for img in images]
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # Forward pass
+        model.train()  # Need train mode to get losses
+        outputs = model(images, targets)
         loss_dict = outputs["losses"]
-
-        # Compute NOCS loss externally
+        # Compute NOCS loss
         nocs_logits = outputs.get("nocs_logits")
-        if nocs_logits is not None and nocs_logits.shape[0] > 0:
-            # Get stored data from RoI heads
-            nocs_proposals = self.model.model.roi_heads.nocs_proposals_storage
-            nocs_matched_idxs = self.model.model.roi_heads.nocs_matched_idxs_storage
-
-            # Extract GT data
-            gt_nocs = [t["nocs"] for t in targets]
-            gt_labels = [t["labels"] for t in targets]
-            gt_masks = [t["masks"] for t in targets]
-
-            # Compute NOCS loss
-            loss_nocs = nocs_loss(
-                nocs_logits,
-                nocs_proposals,
-                gt_nocs,
-                gt_masks,
-                gt_labels,
-                nocs_matched_idxs,
-            )
-            loss_dict["loss_nocs"] = loss_nocs * self.loss_weight_nocs
-        else:
-            loss_dict["loss_nocs"] = torch.tensor(0.0, device=self.device)
-
-        # Total loss (sum all losses from dict)
-        total_loss = sum(loss for loss in loss_dict.values())
-
-        # Backward pass
-        self.optimizer.zero_grad()
-        total_loss.backward()
-
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
-
-        self.optimizer.step()
-
-        # Return loss values
-        loss_dict["total"] = total_loss
-        return {
-            k: v.item() if isinstance(v, torch.Tensor) else v
-            for k, v in loss_dict.items()
-        }
-
-    @torch.no_grad()
-    def validate(self) -> Dict[str, float]:
-        """Run validation."""
-        self.model.eval()
-
-        total_losses = {}
-        num_batches = 0
-
-        for images, targets in tqdm(self.val_loader, desc="Validation", leave=False):
-            # Move to device
-            images = [img.to(self.device) for img in images]
-            targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
-
-            # Forward pass
-            self.model.train()  # Need train mode to get losses
-            outputs = self.model(images, targets)
-            loss_dict = outputs["losses"]
-
-            # Compute NOCS loss
-            nocs_logits = outputs.get("nocs_logits")
-            if nocs_logits is not None and nocs_logits.shape[0] > 0:
-                nocs_proposals = self.model.model.roi_heads.nocs_proposals_storage
-                nocs_matched_idxs = self.model.model.roi_heads.nocs_matched_idxs_storage
-
-                gt_nocs = [t["nocs"] for t in targets]
-                gt_labels = [t["labels"] for t in targets]
-                gt_masks = [t["masks"] for t in targets]
-
-                loss_nocs = nocs_loss(
-                    nocs_logits,
-                    nocs_proposals,
-                    gt_nocs,
-                    gt_masks,
-                    gt_labels,
-                    nocs_matched_idxs,
-                )
-                loss_dict["loss_nocs"] = loss_nocs * self.loss_weight_nocs
-            else:
-                loss_dict["loss_nocs"] = torch.tensor(0.0, device=self.device)
-
-            # Accumulate
-            for k, v in loss_dict.items():
-                val = v.item() if isinstance(v, torch.Tensor) else v
-                if k not in total_losses:
-                    total_losses[k] = 0.0
-                total_losses[k] += val
-
-            num_batches += 1
-
-        # Average
-        if num_batches > 0:
-            for k in total_losses.keys():
-                total_losses[k] /= num_batches
-
-        # Add total
-        total_losses["total"] = sum(total_losses.values())
-
-        self.model.eval()
-        return total_losses
-
-    def save_checkpoint(self, iteration: int, stage: int):
-        """Save training checkpoint."""
-        checkpoint_path = (
-            self.checkpoint_dir / f"checkpoint_stage{stage}_iter{iteration}.pth"
+        loss_dict["loss_nocs"] = compute_nocs_loss(
+            model, nocs_logits, targets, device=device
         )
+        # Accumulate
+        for k, v in loss_dict.items():
+            val = v.item() if isinstance(v, torch.Tensor) else v
+            if k not in total_losses:
+                total_losses[k] = 0.0
+            total_losses[k] += val
 
-        torch.save(
-            {
-                "iteration": iteration,
-                "stage": stage,
-                "model_state_dict": self.model.state_dict(),
-                "optimizer_state_dict": self.optimizer.state_dict(),
-            },
-            checkpoint_path,
-        )
+        num_batches += 1
 
-        logger.info(f"Saved checkpoint: {checkpoint_path}")
+    # Average
+    if num_batches > 0:
+        for k in total_losses.keys():
+            total_losses[k] /= num_batches
+    # Add total
+    total_losses["total"] = sum(total_losses.values())
 
-    def train(self):
-        """Main training loop."""
-        logger.info("Starting training...")
+    return total_losses
 
-        iteration = 0
 
-        for stage_idx, stage in enumerate(self.stages):
-            self._setup_stage(stage_idx)
-            stage_epochs = stage["epochs"]
-            for _ in tqdm(range(stage_epochs), desc=stage["name"]):
-                for images, targets in tqdm(
-                    self.train_loader, total=10, desc="Training"
-                ):
-                    # Train iteration
-                    losses = self.train_iteration(images, targets)
-                    iteration += 1
-
-                    # Logging
-                    if iteration % self.log_interval == 0:
-                        log_str = f"[Iter {iteration}] "
-                        log_str += " | ".join(
-                            [f"{k}: {v:.4f}" for k, v in losses.items()]
-                        )
-                        logger.info(log_str)
-
-                        # Tensorboard
-                        for k, v in losses.items():
-                            self.writer.add_scalar(f"train/{k}", v, iteration)
-
-                    # Checkpointing
-                    if iteration % self.checkpoint_interval == 0:
-                        self.save_checkpoint(iteration, stage_idx)
-
-                val_losses = self.validate()
-                val_str = " | ".join([f"{k}: {v:.4f}" for k, v in val_losses.items()])
-                logger.info(f"[Iter {iteration}] Validation: {val_str}")
-                for k, v in val_losses.items():
-                    self.writer.add_scalar(f"val/{k}", v, iteration)
-
-            # Save at end of stage
-            self.save_checkpoint(iteration, stage_idx)
-
-        logger.info("Training complete!")
-        self.writer.close()
+def save_checkpoint(checkpoint_dir, model, optimizer, iteration, stage):
+    """Save training checkpoint."""
+    checkpoint_path = checkpoint_dir / f"checkpoint_stage{stage}_iter{iteration}.pth"
+    torch.save(
+        {
+            "iteration": iteration,
+            "stage": stage,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+        },
+        checkpoint_path,
+    )
+    logger.info(f"Saved checkpoint: {checkpoint_path}")
 
 
 def _collate_fn(batch):
@@ -394,8 +222,8 @@ def main():
     )
     parser.add_argument(
         "--output-dir",
-        type=str,
-        default="./output/training",
+        type=Path,
+        default=Path("output/training"),
         help="Output directory for checkpoints and logs",
     )
     # Model
@@ -432,14 +260,51 @@ def main():
         "--device", type=str, default="cuda", help="Device to use (cuda or cpu)"
     )
     # Training stages
-    parser.add_argument("--stage1-epochs", type=int, default=1)
-    parser.add_argument("--stage2-epochs", type=int, default=1)
-    parser.add_argument("--stage3-epochs", type=int, default=10)
+    parser.add_argument(
+        "--stage-epochs",
+        nargs="+",
+        type=int,
+        required=True,
+        help="Number of epochs for each training stage",
+    )
+    parser.add_argument(
+        "--stage-lrs",
+        nargs="+",
+        type=int,
+        required=True,
+        help="Learning rates to use during each training stage",
+    )
+    parser.add_argument(
+        "--stage-freezes",
+        nargs="+",
+        type=int,
+        required=True,
+        help="Stage number of model backbone to freeze up to for each stage",
+    )
     # Checkpointing and Logging
-    parser.add_argument("--checkpoint-interval", type=int, default=100)
-    parser.add_argument("--log-interval", type=int, default=100)
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=100,
+        help="Checkpoint interval when training, in number of iterations",
+    )
+    parser.add_argument(
+        "--log-interval",
+        type=int,
+        default=100,
+        help="Logging interval when training, in number of iterations",
+    )
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
     args = parser.parse_args()
+
+    # Validation
+    if not (
+        len(args.stage_epochs) == len(args.stage_lrs)
+        and len(args.stage_lrs) == len(args.stage_freezes)
+    ):
+        raise ValueError(
+            f"Arguments stage_epochs, stage_lrs and stage_freezes must be of the same length but got: {args.stage_epochs}, {args.stage_lrs}, {args.stage_freezes}"
+        )
 
     # Setup logging
     output_dir = Path(args.output_dir)
@@ -460,6 +325,10 @@ def main():
     train_shard_ids = [i for i in range(n_train_shards)]
     val_shard_ids = [i for i in range(n_train_shards, N_SHARDS)]
     hf_token = get_token()
+    if hf_token is None:
+        logger.warning(
+            "No huggingface token was sourced. Rate limiting may occur. Tip: login using `hf auth login`"
+        )
     train_dataset = create_webdataset(
         repo_id, shard_ids=train_shard_ids, shuffle=False, hf_token=hf_token
     )
@@ -493,26 +362,97 @@ def main():
         pretrained=args.pretrained,
     )
 
-    initial_lr = (args.batch_size / 2) * 0.001
-    # Create trainer
-    trainer = NOCSTrainer(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        output_dir=args.output_dir,
-        device=args.device,
-        stage1_epochs=args.stage1_epochs,
-        stage2_epochs=args.stage2_epochs,
-        stage3_epochs=args.stage3_epochs,
-        stage1_lr=initial_lr,
-        stage2_lr=initial_lr / 10,
-        stage3_lr=initial_lr / 10,
-        checkpoint_interval=args.checkpoint_interval,
-        log_interval=args.log_interval,
-    )
+    # Setup training utils
+    stages = [
+        {
+            "epochs": epochs,
+            "lr": lr,
+            "freeze_stage": freeze,
+        }
+        for epochs, lr, freeze in zip(
+            args.stage_epochs, args.stage_lrs, args.stage_freezes
+        )
+    ]
+    summary_writer = SummaryWriter(args.output_dir / "tensorboard")
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    args.checkpoint_dir = args.output_dir / "checkpoints"
+    args.checkpoint_dir.mkdir(exist_ok=True)
+    logger.info("Trainer initialized:")
+    logger.info(f"  Output directory: {args.output_dir}")
+    logger.info(f"  Device: {args.device}")
 
-    # Train
-    trainer.train()
+    iteration_count = 0
+    for stage_index, stage in enumerate(stages):
+        logger.info("=" * 70)
+        logger.info(f"Setting up stage {stage_index + 1}")
+        logger.info(f"Epochs: {stage['epochs']}")
+        logger.info(f"Learning rate: {stage['lr']}")
+        logger.info(f"Freeze stage: {stage['freeze_stage']}")
+        logger.info("=" * 70)
+        # Freeze backbone stages
+        model.freeze_backbone_stages(stage["freeze_stage"])
+        # Create optimizer
+        optimizer = torch.optim.SGD(
+            filter(lambda p: p.requires_grad, model.parameters()),
+            lr=stage["lr"],
+            momentum=0.9,
+            weight_decay=1e-4,
+        )
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in model.parameters())
+        logger.info(f"  Trainable parameters: {trainable_params:,} / {total_params:,}")
+        n_epochs = args.stage_epochs[stage_index]
+        for _ in tqdm(range(n_epochs), desc=f"Stage {stage_index + 1}"):
+            for images, targets in tqdm(
+                train_loader,
+                total=math.ceil(len(train_shard_ids) * 1000 / args.batch_size),
+                desc=f"Stage {stage_index + 1} train loop",
+            ):
+                # Train iteration
+                losses = train_iteration(model, optimizer, images, targets, args.device)
+                iteration_count += 1
+
+                # Logging
+                if iteration_count % args.log_interval == 0:
+                    log_str = f"[Iter {iteration_count}] "
+                    log_str += " | ".join([f"{k}: {v:.4f}" for k, v in losses.items()])
+                    logger.info(log_str)
+                    # Tensorboard
+                    for k, v in losses.items():
+                        summary_writer.add_scalar(f"train/{k}", v, iteration_count)
+
+                # Checkpointing
+                if iteration_count % args.checkpoint_interval == 0:
+                    save_checkpoint(
+                        args.checkpoint_dir,
+                        model,
+                        optimizer,
+                        iteration_count,
+                        stage_index,
+                    )
+
+            val_losses = validate(
+                model,
+                val_loader,
+                args.device,
+                len_dataloader=math.ceil(len(val_shard_ids) * 1000 / args.batch_size),
+            )
+            val_str = " | ".join([f"{k}: {v:.4f}" for k, v in val_losses.items()])
+            logger.info(f"[Iter {iteration_count}] Validation: {val_str}")
+            for k, v in val_losses.items():
+                summary_writer.add_scalar(f"val/{k}", v, iteration_count)
+
+            # Save at end of stage
+            save_checkpoint(
+                args.checkpoint_dir,
+                model,
+                optimizer,
+                iteration_count,
+                stage_index,
+            )
+
+        logger.info("Training complete!")
+        summary_writer.close()
 
 
 if __name__ == "__main__":
