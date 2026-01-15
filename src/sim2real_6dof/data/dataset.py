@@ -121,7 +121,7 @@ def create_webdataset(
     ]
     if hf_token is not None:
         shard_urls = [
-            f"pipe:curl -s -L {shard_url} -H 'Authorization:Bearer {hf_token}'"
+            f"pipe:curl --connect-timeout 30 --retry 30 --retry-delay 5 -f --speed-limit 1 --speed-time 10 --retry-connrefused -s -L {shard_url} -H 'Authorization:Bearer {hf_token}'"
             for shard_url in shard_urls
         ]
     dataset = wds.WebDataset(shard_urls, shardshuffle=shuffle, seed=seed)
