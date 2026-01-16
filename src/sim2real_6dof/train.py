@@ -331,6 +331,8 @@ def main():
     args.output_dir = str(args.output_dir)
     args.cache_dir = str(args.cache_dir)
     logger.info(f"Arguments:\n{json.dumps(vars(args), indent=2)}")
+    args.output_dir = Path(args.output_dir) if args.output_dir != "None" else None
+    args.cache_dir = Path(args.cache_dir) if args.cache_dir != "None" else None
 
     # Load datasets
     logger.info("Loading datasets...")
