@@ -221,6 +221,11 @@ def main():
         help="HF dataset repo ID to use for webdataset",
     )
     parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help="Cache directory for streamed datasets",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("output/training"),
@@ -316,12 +321,15 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(args.log_level, output_dir / "training.log")
+    if args.cache_dir is not None:
+        args.cache_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 70)
     logger.info("NOCS R-CNN Training")
     logger.info("=" * 70)
     # PosixPath is not JSON serializable
     args.output_dir = str(args.output_dir)
+    args.cache_dir = str(args.cache_dir)
     logger.info(f"Arguments:\n{json.dumps(vars(args), indent=2)}")
 
     # Load datasets
@@ -338,10 +346,18 @@ def main():
             "No huggingface token was sourced. Rate limiting may occur. Tip: login using `hf auth login`"
         )
     train_dataset = create_webdataset(
-        repo_id, shard_ids=train_shard_ids, shuffle=False, hf_token=hf_token
+        repo_id,
+        shard_ids=train_shard_ids,
+        shuffle=False,
+        hf_token=hf_token,
+        cache_dir=args.cache_dir,
     )
     val_dataset = create_webdataset(
-        repo_id, shard_ids=val_shard_ids, shuffle=False, hf_token=hf_token
+        repo_id,
+        shard_ids=val_shard_ids,
+        shuffle=False,
+        hf_token=hf_token,
+        cache_dir=args.cache_dir,
     )
     train_loader = DataLoader(
         train_dataset,

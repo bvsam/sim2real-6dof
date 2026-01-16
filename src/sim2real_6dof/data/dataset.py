@@ -96,6 +96,7 @@ def create_webdataset(
     shuffle=True,
     seed=0,
     hf_token=None,
+    cache_dir=None,
 ):
     """
     Create a webdataset pipeline with HDF5 parsing.
@@ -124,7 +125,9 @@ def create_webdataset(
             f"pipe:curl --connect-timeout 30 --retry 30 --retry-delay 5 -f --speed-limit 1 --speed-time 10 --retry-connrefused -s -L {shard_url} -H 'Authorization:Bearer {hf_token}'"
             for shard_url in shard_urls
         ]
-    dataset = wds.WebDataset(shard_urls, shardshuffle=shuffle, seed=seed)
+    dataset = wds.WebDataset(
+        shard_urls, shardshuffle=shuffle, seed=seed, cache_dir=cache_dir
+    )
     if shuffle:
         dataset = dataset.shuffle(1000, rng=torch.Generator().manual_seed(seed))
     dataset = dataset.map(lambda x: parse_hdf5_sample(x))
