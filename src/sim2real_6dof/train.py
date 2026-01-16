@@ -72,9 +72,9 @@ def compute_nocs_loss(model, nocs_logits, targets, device):
         nocs_matched_idxs = model.model.roi_heads.nocs_matched_idxs_storage
 
         # Extract GT data
-        gt_nocs = [t["nocs"] for t in targets]
+        gt_nocs = model.model.roi_heads.nocs_gt_nocs_storage
+        gt_masks = model.model.roi_heads.nocs_gt_masks_storage
         gt_labels = [t["labels"] for t in targets]
-        gt_masks = [t["masks"] for t in targets]
 
         # Compute NOCS loss
         loss_nocs = nocs_loss(

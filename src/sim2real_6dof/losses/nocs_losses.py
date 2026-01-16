@@ -66,6 +66,18 @@ def nocs_loss(nocs_logits, proposals, gt_nocs, gt_masks, gt_labels, nocs_matched
     # Get labels for each positive proposal
     labels = [gt_label[idxs] for gt_label, idxs in zip(gt_labels, nocs_matched_idxs)]
 
+    # Resize GT NOCS to match the spatial dimensions of GT Masks (which MaskRCNN resized)
+    resized_gt_nocs = []
+    for nocs, masks in zip(gt_nocs, gt_masks):
+        target_h, target_w = masks.shape[-2:]
+
+        if nocs.shape[-2:] != (target_h, target_w):
+            nocs = F.interpolate(
+                nocs, size=(target_h, target_w), mode="bilinear", align_corners=False
+            )
+        resized_gt_nocs.append(nocs)
+    gt_nocs = resized_gt_nocs
+
     # Project GT NOCS onto proposal boxes
     nocs_targets = [
         project_nocs_on_boxes(nocs, props, idxs, discretization_size)
