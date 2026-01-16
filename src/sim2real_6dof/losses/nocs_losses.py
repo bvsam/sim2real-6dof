@@ -25,7 +25,8 @@ def project_nocs_on_boxes(gt_nocs, boxes, matched_idxs, M):
         [N_proposals, 3, M, M] cropped and resized NOCS maps
     """
     matched_idxs = matched_idxs.to(boxes)
-    rois = torch.cat([matched_idxs[:, None], boxes], dim=1)
+    batch_inds = torch.zeros_like(matched_idxs[:, None])
+    rois = torch.cat([batch_inds, boxes], dim=1)
     gt_nocs = gt_nocs.to(rois)
     return roi_align(gt_nocs, rois, (M, M), 1.0, aligned=True)
 
@@ -98,7 +99,7 @@ def nocs_loss(nocs_logits, proposals, gt_nocs, gt_masks, gt_labels, nocs_matched
     ]  # [N, 3, num_bins, M, M]
 
     # Create binary mask
-    valid_mask = (mask_targets > 0.0).squeeze(1)
+    valid_mask = (mask_targets > 0.5).squeeze(1)
 
     if valid_mask.sum() == 0:
         return 0
