@@ -262,6 +262,7 @@ class NOCSMaskRCNN(nn.Module):
             num_classes=num_classes,
             num_bins=num_bins,
             output_size=nocs_output_size,
+            use_bn=True,
         )
 
         # Replace RoI heads with our extended version
