@@ -30,15 +30,20 @@ logger = logging.getLogger(__name__)
 
 
 def train_iteration(
-    model, optimizer, images, targets, device, scaler=None
+    model,
+    optimizer,
+    images,
+    targets,
+    device,
+    scaler=None,
+    accumulation_steps=1,
+    iter_idx=0,
 ) -> Dict[str, float]:
     model.train()
 
     # Move to device
     images = [img.to(device) for img in images]
     targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-
-    optimizer.zero_grad()
 
     use_amp = scaler is not None
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_amp):
@@ -56,19 +61,24 @@ def train_iteration(
     # Backward pass
     if scaler:
         scaler.scale(total_loss).backward()
-        scaler.unscale_(optimizer)
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-        scaler.step(optimizer)
-        scaler.update()
+        # Step only every N iterations
+        if (iter_idx + 1) % accumulation_steps == 0:
+            scaler.unscale_(optimizer)
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
     else:
         total_loss.backward()
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-        optimizer.step()
+        if (iter_idx + 1) % accumulation_steps == 0:
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            optimizer.step()
+            optimizer.zero_grad()
 
     # Return loss values
-    loss_dict["total"] = total_loss
+    loss_dict["total"] = total_loss * accumulation_steps
     return {
         k: v.item() if isinstance(v, torch.Tensor) else v for k, v in loss_dict.items()
     }
@@ -278,6 +288,12 @@ def main():
         type=Path,
         help="Path to checkpoint to resume training from",
     )
+    parser.add_argument(
+        "--accumulation-steps",
+        type=int,
+        default=1,
+        help="Number of accumulation steps to use for gradient accumulation",
+    )
     # Training stages
     parser.add_argument(
         "--stage-epochs",
@@ -477,7 +493,14 @@ def main():
             ):
                 # Train iteration
                 losses = train_iteration(
-                    model, optimizer, images, targets, args.device, scaler
+                    model,
+                    optimizer,
+                    images,
+                    targets,
+                    args.device,
+                    scaler,
+                    args.accumulation_steps,
+                    iter_idx=iteration_count,
                 )
                 iteration_count += 1
 
