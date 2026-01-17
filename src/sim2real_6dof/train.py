@@ -72,9 +72,9 @@ def compute_nocs_loss(model, nocs_logits, targets, device):
         nocs_matched_idxs = model.model.roi_heads.nocs_matched_idxs_storage
 
         # Extract GT data
-        gt_nocs = [t["nocs"] for t in targets]
+        gt_nocs = model.model.roi_heads.nocs_gt_nocs_storage
+        gt_masks = model.model.roi_heads.nocs_gt_masks_storage
         gt_labels = [t["labels"] for t in targets]
-        gt_masks = [t["masks"] for t in targets]
 
         # Compute NOCS loss
         loss_nocs = nocs_loss(
@@ -331,6 +331,8 @@ def main():
     args.output_dir = str(args.output_dir)
     args.cache_dir = str(args.cache_dir)
     logger.info(f"Arguments:\n{json.dumps(vars(args), indent=2)}")
+    args.output_dir = Path(args.output_dir) if args.output_dir != "None" else None
+    args.cache_dir = Path(args.cache_dir) if args.cache_dir != "None" else None
 
     # Load datasets
     logger.info("Loading datasets...")

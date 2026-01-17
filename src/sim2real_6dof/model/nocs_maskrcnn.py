@@ -177,6 +177,8 @@ class NOCSRoIHeads(RoIHeads):
                 self.nocs_labels_storage = labels
                 self.nocs_matched_idxs_storage = pos_matched_idxs
                 self.nocs_proposals_storage = nocs_proposals
+                self.nocs_gt_masks_storage = [t["masks"] for t in targets]
+                self.nocs_gt_nocs_storage = [t["nocs"] for t in targets]
             else:
                 # Add NOCS to results
                 num_boxes = [len(r["boxes"]) for r in result]
@@ -262,6 +264,7 @@ class NOCSMaskRCNN(nn.Module):
             num_classes=num_classes,
             num_bins=num_bins,
             output_size=nocs_output_size,
+            use_bn=True,
         )
 
         # Replace RoI heads with our extended version

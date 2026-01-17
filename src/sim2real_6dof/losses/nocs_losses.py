@@ -25,7 +25,8 @@ def project_nocs_on_boxes(gt_nocs, boxes, matched_idxs, M):
         [N_proposals, 3, M, M] cropped and resized NOCS maps
     """
     matched_idxs = matched_idxs.to(boxes)
-    rois = torch.cat([matched_idxs[:, None], boxes], dim=1)
+    batch_inds = torch.zeros_like(matched_idxs[:, None])
+    rois = torch.cat([batch_inds, boxes], dim=1)
     gt_nocs = gt_nocs.to(rois)
     return roi_align(gt_nocs, rois, (M, M), 1.0, aligned=True)
 
@@ -65,6 +66,18 @@ def nocs_loss(nocs_logits, proposals, gt_nocs, gt_masks, gt_labels, nocs_matched
     # Get labels for each positive proposal
     labels = [gt_label[idxs] for gt_label, idxs in zip(gt_labels, nocs_matched_idxs)]
 
+    # Resize GT NOCS to match the spatial dimensions of GT Masks (which MaskRCNN resized)
+    resized_gt_nocs = []
+    for nocs, masks in zip(gt_nocs, gt_masks):
+        target_h, target_w = masks.shape[-2:]
+
+        if nocs.shape[-2:] != (target_h, target_w):
+            nocs = F.interpolate(
+                nocs, size=(target_h, target_w), mode="bilinear", align_corners=False
+            )
+        resized_gt_nocs.append(nocs)
+    gt_nocs = resized_gt_nocs
+
     # Project GT NOCS onto proposal boxes
     nocs_targets = [
         project_nocs_on_boxes(nocs, props, idxs, discretization_size)
@@ -98,7 +111,7 @@ def nocs_loss(nocs_logits, proposals, gt_nocs, gt_masks, gt_labels, nocs_matched
     ]  # [N, 3, num_bins, M, M]
 
     # Create binary mask
-    valid_mask = (mask_targets > 0.0).squeeze(1)
+    valid_mask = (mask_targets > 0.5).squeeze(1)
 
     if valid_mask.sum() == 0:
         return 0
