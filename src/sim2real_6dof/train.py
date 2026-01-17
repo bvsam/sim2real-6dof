@@ -56,7 +56,7 @@ def train_iteration(
             model, nocs_logits, targets, device=device
         )
         # Total loss (sum all losses from dict)
-        total_loss = sum(loss for loss in loss_dict.values())
+        total_loss = sum(loss for loss in loss_dict.values()) / accumulation_steps
 
     # Backward pass
     if scaler:
@@ -481,6 +481,7 @@ def main():
             momentum=0.9,
             weight_decay=1e-4,
         )
+        optimizer.zero_grad()
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         total_params = sum(p.numel() for p in model.parameters())
         logger.info(f"  Trainable parameters: {trainable_params:,} / {total_params:,}")
