@@ -318,6 +318,11 @@ def main():
         action="store_true",
         help="Train with automatic mixed precision (AMP)",
     )
+    parser.add_argument(
+        "--matmul-precision",
+        type=str,
+        help="Explicit matmul precision to use with torch",
+    )
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
     args = parser.parse_args()
 
@@ -329,6 +334,9 @@ def main():
         raise ValueError(
             f"Arguments stage_epochs, stage_lrs and stage_freezes must be of the same length but got: {args.stage_epochs}, {args.stage_lrs}, {args.stage_freezes}"
         )
+
+    if args.matmul_precision:
+        torch.set_float32_matmul_precision(args.matmul_precision)
 
     # Setup logging
     output_dir = Path(args.output_dir)
