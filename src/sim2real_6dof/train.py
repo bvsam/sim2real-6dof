@@ -29,34 +29,43 @@ from sim2real_6dof.model.nocs_maskrcnn import NOCSMaskRCNN
 logger = logging.getLogger(__name__)
 
 
-def train_iteration(model, optimizer, images, targets, device) -> Dict[str, float]:
+def train_iteration(
+    model, optimizer, images, targets, device, scaler=None
+) -> Dict[str, float]:
     model.train()
 
     # Move to device
     images = [img.to(device) for img in images]
     targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-    # Forward pass (model computes internal losses)
-    outputs = model(images, targets)
-    loss_dict = outputs["losses"]
+    optimizer.zero_grad()
 
-    # Compute NOCS loss
-    nocs_logits = outputs.get("nocs_logits")
-    loss_dict["loss_nocs"] = compute_nocs_loss(
-        model, nocs_logits, targets, device=device
-    )
-
-    # Total loss (sum all losses from dict)
-    total_loss = sum(loss for loss in loss_dict.values())
+    use_amp = scaler is not None
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_amp):
+        # Forward pass (model computes internal losses)
+        outputs = model(images, targets)
+        loss_dict = outputs["losses"]
+        # Compute NOCS loss
+        nocs_logits = outputs.get("nocs_logits")
+        loss_dict["loss_nocs"] = compute_nocs_loss(
+            model, nocs_logits, targets, device=device
+        )
+        # Total loss (sum all losses from dict)
+        total_loss = sum(loss for loss in loss_dict.values())
 
     # Backward pass
-    optimizer.zero_grad()
-    total_loss.backward()
-
-    # Gradient clipping
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-
-    optimizer.step()
+    if scaler:
+        scaler.scale(total_loss).backward()
+        scaler.unscale_(optimizer)
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        total_loss.backward()
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+        optimizer.step()
 
     # Return loss values
     loss_dict["total"] = total_loss
@@ -250,12 +259,6 @@ def main():
         default=True,
         help="Use pretrained ResNet backbone",
     )
-    parser.add_argument(
-        "--compile",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Compile model with torch before training",
-    )
     # Training
     parser.add_argument("--batch-size", type=int, default=2, help="Batch size")
     parser.add_argument(
@@ -304,6 +307,16 @@ def main():
         type=int,
         default=100,
         help="Logging interval when training, in number of iterations",
+    )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Compile model with torch before training",
+    )
+    parser.add_argument(
+        "--amp",
+        action="store_true",
+        help="Train with automatic mixed precision (AMP)",
     )
     parser.add_argument("--log-level", type=str, default="INFO", help="Log level")
     args = parser.parse_args()
@@ -408,7 +421,9 @@ def main():
     logger.info("Trainer initialized:")
     logger.info(f"  Output directory: {output_dir}")
     logger.info(f"  Device: {args.device}")
+    scaler = torch.amp.GradScaler(args.device) if args.amp else None
 
+    # Train
     iteration_count = 0
     for stage_index, stage in enumerate(stages):
         logger.info("=" * 70)
@@ -437,7 +452,9 @@ def main():
                 desc=f"Stage {stage_index + 1} train loop",
             ):
                 # Train iteration
-                losses = train_iteration(model, optimizer, images, targets, args.device)
+                losses = train_iteration(
+                    model, optimizer, images, targets, args.device, scaler
+                )
                 iteration_count += 1
 
                 # Logging
