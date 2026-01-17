@@ -273,6 +273,11 @@ def main():
     parser.add_argument(
         "--device", type=str, default="cuda", help="Device to use (cuda or cpu)"
     )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        help="Path to checkpoint to resume training from",
+    )
     # Training stages
     parser.add_argument(
         "--stage-epochs",
@@ -308,6 +313,7 @@ def main():
         default=100,
         help="Logging interval when training, in number of iterations",
     )
+    # Performance
     parser.add_argument(
         "--compile",
         action="store_true",
@@ -351,9 +357,11 @@ def main():
     # PosixPath is not JSON serializable
     args.output_dir = str(args.output_dir)
     args.cache_dir = str(args.cache_dir)
+    args.resume = str(args.resume)
     logger.info(f"Arguments:\n{json.dumps(vars(args), indent=2)}")
     args.output_dir = Path(args.output_dir) if args.output_dir != "None" else None
     args.cache_dir = Path(args.cache_dir) if args.cache_dir != "None" else None
+    args.resume = Path(args.resume) if args.resume != "None" else None
 
     # Load datasets
     logger.info("Loading datasets...")
@@ -433,6 +441,14 @@ def main():
 
     # Train
     iteration_count = 0
+    if args.resume:
+        logger.info(f"Resuming from checkpoint: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=args.device)
+        # Load model weights
+        model.load_state_dict(checkpoint["model_state_dict"])
+        # Restore iteration count for correct tensorboard logging
+        iteration_count = checkpoint.get("iteration", 0)
+        logger.info(f"Restored model state. Resuming from iteration {iteration_count}")
     for stage_index, stage in enumerate(stages):
         logger.info("=" * 70)
         logger.info(f"Setting up stage {stage_index + 1}")
